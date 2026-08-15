@@ -1,36 +1,34 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-// Environment variables
-const supabaseUrl = (import.meta as any).env?.VITE_SUPABASE_URL || '';
-const supabaseAnonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || '';
+// Read from standard environment variables
+const envUrl = (((import.meta as any).env?.VITE_SUPABASE_URL as string) || '').trim();
+const envKey = (((import.meta as any).env?.VITE_SUPABASE_ANON_KEY as string) || '').trim();
+
+const FALLBACK_URL = 'https://placeholder.supabase.co';
+const FALLBACK_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.placeholder';
 
 export const isSupabaseConfigured = (): boolean => {
   return Boolean(
-    supabaseUrl && 
-    typeof supabaseUrl === 'string' && 
-    supabaseUrl.startsWith('http') && 
-    !supabaseUrl.includes('placeholder') &&
-    !supabaseUrl.includes('xyzcompany') &&
-    supabaseAnonKey && 
-    typeof supabaseAnonKey === 'string' && 
-    supabaseAnonKey.length > 20
+    envUrl && 
+    envUrl.startsWith('http') && 
+    !envUrl.includes('placeholder') &&
+    !envUrl.includes('xyzcompany') &&
+    envKey && 
+    envKey.length > 20
   );
 };
 
-// Create the configured Supabase client
-// If env vars are not yet populated, provide a fallback instance with placeholder credentials so imports won't throw
-const fallbackUrl = 'https://placeholder.supabase.co';
-const fallbackKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.placeholder';
-
 export const supabase: SupabaseClient = createClient(
-  isSupabaseConfigured() ? supabaseUrl : fallbackUrl,
-  isSupabaseConfigured() ? supabaseAnonKey : fallbackKey,
+  isSupabaseConfigured() ? envUrl : FALLBACK_URL,
+  isSupabaseConfigured() ? envKey : FALLBACK_KEY,
   {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
-      storage: window.localStorage,
+      storage: typeof window !== 'undefined' ? window.localStorage : undefined,
     },
   }
 );
+
+

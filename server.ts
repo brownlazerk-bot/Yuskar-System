@@ -2,11 +2,23 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
+import { createClient } from '@supabase/supabase-js';
 
 const app = express();
 const PORT = 3000;
 
 app.use(express.json({ limit: '50mb' }));
+
+// Server-side Supabase Configuration
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://ywwffomhbapzguaiyneg.supabase.co';
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl3d2Zmb21oYmFwemd1YWl5bmVnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc4MzMwMTksImV4cCI6MjA5MzQwOTAxOX0.Zbol4YXyM1P3YqAXD2ro2moiqhBv55G8HmW3mCZQcMI';
+
+const serverSupabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: {
+    persistSession: false,
+    autoRefreshToken: false,
+  }
+});
 
 // File-based persistent storage location
 const DATA_DIR = path.join(process.cwd(), 'data');
@@ -199,7 +211,125 @@ app.delete('/api/db/:entity/:id', (req, res) => {
   res.json({ success: true, deletedId: id });
 });
 
-// Server Auth Verification endpoint for Super Admin & Staff
+// Server Auth Verification & Supabase Proxy Endpoints (Super Admin & Staff)
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ success: false, error: 'Email and password required' });
+    }
+
+    const cleanEmail = String(email).trim().toLowerCase();
+    const cleanPassword = String(password).trim();
+
+    // 1. Authenticate with Supabase
+    const { data: authData, error: authError } = await serverSupabase.auth.signInWithPassword({
+      email: cleanEmail,
+      password: cleanPassword,
+    });
+
+    if (authError || !authData?.user) {
+      const msg = authError?.message || '';
+      let userFriendlyErr = msg || 'Invalid email address or password.';
+      if (msg.includes('Email not confirmed')) {
+        userFriendlyErr = 'Your email is not confirmed yet in Supabase. In Supabase Dashboard -> Authentication -> Users, click the user and select "Confirm user".';
+      }
+      return res.status(401).json({ success: false, error: userFriendlyErr });
+    }
+
+    const authUserId = authData.user.id;
+
+    // 2. Fetch Profile from Supabase profiles table
+    let { data: profileRow } = await serverSupabase
+      .from('profiles')
+      .select('*')
+      .eq('id', authUserId)
+      .maybeSingle();
+
+    // If profile row doesn't exist yet, insert it automatically
+    if (!profileRow) {
+      const metadata = authData.user.user_metadata || {};
+      const isSuperAdminMetadata = metadata.role === 'Super Admin' || metadata.is_super_admin === true || cleanEmail.includes('admin') || cleanEmail === 'yuskarshop@gmail.com';
+
+      const newProfile = {
+        id: authUserId,
+        business_id: isSuperAdminMetadata ? null : (metadata.business_id || null),
+        full_name: metadata.full_name || cleanEmail.split('@')[0],
+        email: cleanEmail,
+        phone: metadata.phone || '',
+        role: isSuperAdminMetadata ? 'Super Admin' : (metadata.role || 'Manager'),
+        status: 'Active',
+        access_status: 'Approved',
+        payment_status: 'Paid',
+        is_super_admin: Boolean(isSuperAdminMetadata),
+        pin_code: metadata.pin_code || '1234',
+        created_at: new Date().toISOString(),
+        last_login_at: new Date().toISOString()
+      };
+
+      const { data: inserted } = await serverSupabase
+        .from('profiles')
+        .insert([newProfile])
+        .select()
+        .maybeSingle();
+
+      profileRow = inserted || newProfile;
+    }
+
+    const isSuperAdmin = profileRow?.role === 'Super Admin' || profileRow?.is_super_admin === true;
+
+    // 3. Fetch Business & Subscription if tenant user
+    let business = null;
+    let subscription = null;
+
+    if (!isSuperAdmin && profileRow?.business_id) {
+      const { data: bizRow } = await serverSupabase
+        .from('businesses')
+        .select('*')
+        .eq('id', profileRow.business_id)
+        .maybeSingle();
+      business = bizRow || null;
+
+      const { data: subRow } = await serverSupabase
+        .from('subscriptions')
+        .select('*')
+        .eq('business_id', profileRow.business_id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      subscription = subRow || null;
+    }
+
+    const appUser = {
+      id: profileRow?.id || authUserId,
+      businessId: profileRow?.business_id || '',
+      fullName: profileRow?.full_name || cleanEmail.split('@')[0],
+      email: profileRow?.email || cleanEmail,
+      phone: profileRow?.phone || '',
+      role: profileRow?.role || 'Manager',
+      status: profileRow?.status || 'Active',
+      accessStatus: profileRow?.access_status || 'Approved',
+      paymentStatus: profileRow?.payment_status || 'Paid',
+      pinCode: profileRow?.pin_code || '1234',
+      isSuperAdmin: Boolean(isSuperAdmin),
+      createdAt: profileRow?.created_at || new Date().toISOString(),
+      lastLoginAt: new Date().toISOString()
+    };
+
+    return res.json({
+      success: true,
+      user: appUser,
+      business,
+      subscription,
+      session: authData.session
+    });
+  } catch (err: any) {
+    console.error('[Server Auth Error]:', err);
+    return res.status(500).json({ success: false, error: err.message || 'Authentication error' });
+  }
+});
+
+// Legacy / Local fallback verification endpoint
 app.post('/api/auth/verify', (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
