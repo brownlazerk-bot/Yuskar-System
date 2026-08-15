@@ -1,0 +1,6 @@
+{
+  "name": "YusKar Management System",
+  "description": "YusKar Management System — Enterprise Hotel, Restaurant & Multi-Tenant Hospitality Operations and POS Cloud Platform with MTN MoMo Rwanda license integration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

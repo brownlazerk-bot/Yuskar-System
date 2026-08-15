@@ -1,0 +1,1082 @@
+import { 
+  MenuItem, Table, Waiter, Order, KitchenTicket, 
+  StockAdjustmentLog, Shift, GuestRoom, AppUser, AuditLog,
+  Expense, CashMovement, DailyClosingRecord, POSDepositRecord, PurchaseOrder, KitchenIngredient,
+  StockMovementRecord, KitchenWasteRecord, Recipe,
+  WhatsAppSettings, WhatsAppRecipient, ReportDeliveryRule, ReportDeliveryHistory,
+  MessageTemplate, NotificationItem, NotificationRule, ApprovalRule, ApprovalRequest,
+  Employee, SalaryAdvance, PayrollRecord, AttendanceRecord,
+  Business, Subscription, SubscriptionPayment, SubscriptionOverrideRecord, MomoApiConfig
+} from '../types';
+import { 
+  INITIAL_MENU_ITEMS, INITIAL_TABLES, INITIAL_WAITERS, 
+  INITIAL_GUEST_ROOMS, INITIAL_ORDERS, INITIAL_KITCHEN_TICKETS,
+  INITIAL_PURCHASE_ORDERS, INITIAL_KITCHEN_INGREDIENTS
+} from '../data/mockData';
+import {
+  INITIAL_EMPLOYEES, INITIAL_SALARY_ADVANCES,
+  INITIAL_PAYROLL_RECORDS, INITIAL_ATTENDANCE_RECORDS
+} from '../data/mockHRData';
+import {
+  INITIAL_WHATSAPP_SETTINGS,
+  INITIAL_WHATSAPP_RECIPIENTS,
+  INITIAL_REPORT_RULES,
+  INITIAL_REPORT_HISTORY,
+  INITIAL_MESSAGE_TEMPLATES,
+  INITIAL_NOTIFICATION_RULES,
+  INITIAL_NOTIFICATIONS,
+  INITIAL_APPROVAL_RULES,
+  INITIAL_APPROVAL_REQUESTS
+} from '../data/mockAutomationData';
+
+const KEYS = {
+  PROD_INIT: 'hotel_prod_v1_init',
+  MENU_ITEMS: 'hotel_menu_items_prod',
+  TABLES: 'hotel_tables_prod',
+  WAITERS: 'hotel_waiters_prod',
+  ORDERS: 'hotel_orders_prod',
+  KITCHEN_TICKETS: 'hotel_kitchen_tickets_prod',
+  STOCK_LOGS: 'hotel_stock_logs_prod',
+  SHIFTS: 'hotel_shifts_prod',
+  CURRENT_SHIFT: 'hotel_current_shift_prod',
+  GUEST_ROOMS: 'hotel_guest_rooms_prod',
+  USERS: 'hotel_users_prod',
+  AUDIT_LOGS: 'hotel_audit_logs_prod',
+  CURRENT_USER: 'hotel_current_user_session',
+  EXPENSES: 'hotel_expenses_prod',
+  CASH_MOVEMENTS: 'hotel_cash_movements_prod',
+  DAILY_CLOSINGS: 'hotel_daily_closings_prod',
+  PURCHASE_ORDERS: 'hotel_purchase_orders_prod',
+  KITCHEN_INGREDIENTS: 'hotel_kitchen_ingredients_prod',
+  STOCK_MOVEMENT_RECORDS: 'hotel_stock_movement_records_prod',
+  KITCHEN_WASTE_RECORDS: 'hotel_kitchen_waste_records_prod',
+  RECIPES: 'hotel_recipes_prod',
+  WHATSAPP_SETTINGS: 'hotel_whatsapp_settings_prod',
+  WHATSAPP_RECIPIENTS: 'hotel_whatsapp_recipients_prod',
+  REPORT_DELIVERY_RULES: 'hotel_report_delivery_rules_prod',
+  REPORT_DELIVERY_HISTORY: 'hotel_report_delivery_history_prod',
+  MESSAGE_TEMPLATES: 'hotel_message_templates_prod',
+  NOTIFICATION_ITEMS: 'hotel_notification_items_prod',
+  NOTIFICATION_RULES: 'hotel_notification_rules_prod',
+  APPROVAL_RULES: 'hotel_approval_rules_prod',
+  APPROVAL_REQUESTS: 'hotel_approval_requests_prod',
+  CATEGORIES: 'hotel_categories_prod',
+  INVENTORY_ITEMS: 'hotel_inventory_items_prod',
+  BUSINESSES: 'hotel_businesses_prod',
+  EMPLOYEES: 'hotel_employees_prod',
+  SALARY_ADVANCES: 'hotel_salary_advances_prod',
+  PAYROLL_RECORDS: 'hotel_payroll_records_prod',
+  ATTENDANCE_RECORDS: 'hotel_attendance_records_prod',
+  POS_DEPOSITS: 'hotel_pos_deposits_prod',
+  SUBSCRIPTIONS: 'hotel_subscriptions_prod',
+  SUBSCRIPTION_PAYMENTS: 'hotel_subscription_payments_prod',
+  SUBSCRIPTION_OVERRIDES: 'hotel_subscription_overrides_prod',
+  CURRENT_BUSINESS: 'hotel_current_business_prod',
+  MOMO_CONFIG: 'hotel_momo_config_prod'
+};
+
+// Ensure legacy sample keys are cleared without erasing current production keys
+function initializeCleanSlateIfNeeded() {
+  try {
+    const isInit = localStorage.getItem(KEYS.PROD_INIT);
+    if (!isInit) {
+      // Clear legacy sample keys
+      localStorage.removeItem('bar_pos_menu_items');
+      localStorage.removeItem('bar_pos_tables');
+      localStorage.removeItem('bar_pos_waiters');
+      localStorage.removeItem('bar_pos_orders_v2');
+      localStorage.removeItem('bar_pos_kitchen_tickets_v2');
+      localStorage.removeItem('bar_pos_stock_logs');
+      localStorage.removeItem('bar_pos_shifts');
+      localStorage.removeItem('bar_pos_current_shift');
+      localStorage.removeItem('bar_pos_guest_rooms');
+
+      localStorage.setItem(KEYS.PROD_INIT, 'true');
+    }
+  } catch (err) {
+    console.error('Error initializing clean slate:', err);
+  }
+}
+
+initializeCleanSlateIfNeeded();
+
+// Safe JSON parse
+function getStorage<T>(key: string, defaultValue: T): T {
+  try {
+    const data = localStorage.getItem(key);
+    return data ? JSON.parse(data) : defaultValue;
+  } catch (err) {
+    console.error(`Error reading ${key} from storage:`, err);
+    return defaultValue;
+  }
+}
+
+import { notifyDataChange } from './syncEngine';
+import { pushKeyToServer, recordLocalWrite } from './serverSync';
+import { getSupabaseClient } from './supabaseSync';
+
+const LOCAL_TO_SERVER_KEY: Record<string, string> = {
+  [KEYS.MENU_ITEMS]: 'menuItems',
+  [KEYS.TABLES]: 'tables',
+  [KEYS.WAITERS]: 'waiters',
+  [KEYS.ORDERS]: 'orders',
+  [KEYS.KITCHEN_TICKETS]: 'kitchenTickets',
+  [KEYS.STOCK_LOGS]: 'stockLogs',
+  [KEYS.SHIFTS]: 'shifts',
+  [KEYS.CURRENT_SHIFT]: 'currentShift',
+  [KEYS.GUEST_ROOMS]: 'guestRooms',
+  [KEYS.USERS]: 'users',
+  [KEYS.AUDIT_LOGS]: 'auditLogs',
+  [KEYS.EXPENSES]: 'expenses',
+  [KEYS.CASH_MOVEMENTS]: 'cashMovements',
+  [KEYS.DAILY_CLOSINGS]: 'dailyClosings',
+  [KEYS.PURCHASE_ORDERS]: 'purchaseOrders',
+  [KEYS.KITCHEN_INGREDIENTS]: 'ingredients',
+  [KEYS.RECIPES]: 'recipes',
+  [KEYS.STOCK_MOVEMENT_RECORDS]: 'stockMovements',
+  [KEYS.KITCHEN_WASTE_RECORDS]: 'wasteRecords',
+  [KEYS.WHATSAPP_SETTINGS]: 'whatsappSettings',
+  [KEYS.WHATSAPP_RECIPIENTS]: 'whatsappRecipients',
+  [KEYS.REPORT_DELIVERY_RULES]: 'reportRules',
+  [KEYS.REPORT_DELIVERY_HISTORY]: 'reportHistory',
+  [KEYS.MESSAGE_TEMPLATES]: 'messageTemplates',
+  [KEYS.NOTIFICATION_ITEMS]: 'notifications',
+  [KEYS.NOTIFICATION_RULES]: 'notificationRules',
+  [KEYS.APPROVAL_RULES]: 'approvalRules',
+  [KEYS.APPROVAL_REQUESTS]: 'approvalRequests',
+  [KEYS.CATEGORIES]: 'categories',
+  [KEYS.INVENTORY_ITEMS]: 'inventoryItems',
+  [KEYS.BUSINESSES]: 'businesses'
+};
+
+function setStorage<T>(key: string, value: T): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+    notifyDataChange(key);
+    
+    // Asynchronously push to central Express backend server for cross-device sync (HP, Dell, Phone)
+    const serverKey = LOCAL_TO_SERVER_KEY[key];
+    if (serverKey) {
+      recordLocalWrite(serverKey);
+      pushKeyToServer(serverKey, value);
+
+      // Also auto-push to Supabase Cloud if configured
+      const client = getSupabaseClient();
+      if (client) {
+        Promise.resolve(
+          client.from('hotel_store').upsert([{
+            key: serverKey,
+            data: value,
+            updated_at: new Date().toISOString()
+          }], { onConflict: 'key' })
+        ).catch(() => {});
+      }
+    }
+  } catch (err) {
+    console.error(`Error saving ${key} to storage:`, err);
+  }
+}
+
+export function loadMenuItems(): MenuItem[] {
+  return getStorage<MenuItem[]>(KEYS.MENU_ITEMS, INITIAL_MENU_ITEMS);
+}
+
+export function saveMenuItems(items: MenuItem[]): void {
+  setStorage(KEYS.MENU_ITEMS, items);
+}
+
+export function loadTables(): Table[] {
+  return getStorage<Table[]>(KEYS.TABLES, INITIAL_TABLES);
+}
+
+export function saveTables(tables: Table[]): void {
+  setStorage(KEYS.TABLES, tables);
+}
+
+export function loadWaiters(): Waiter[] {
+  const customWaiters = getStorage<Waiter[]>(KEYS.WAITERS, INITIAL_WAITERS);
+  let users: AppUser[] = [];
+  try {
+    users = loadUsers();
+  } catch (err) {
+    users = [];
+  }
+
+  const waiterUsers = users.filter(u => u.role === 'Waiter' && u.status === 'Active');
+  const combined = [...customWaiters];
+
+  waiterUsers.forEach(u => {
+    const existingIndex = combined.findIndex(
+      w => w.id === u.id || w.name.toLowerCase() === u.fullName.toLowerCase()
+    );
+    if (existingIndex === -1) {
+      combined.push({
+        id: u.id,
+        name: u.fullName,
+        employeeId: u.pinCode ? `PIN-${u.pinCode}` : `W-${u.id.slice(-4)}`,
+        phone: u.phone || '+250 780 000 000',
+        shift: 'Morning',
+        active: true
+      });
+    }
+  });
+
+  return combined;
+}
+
+export function saveWaiters(waiters: Waiter[]): void {
+  setStorage(KEYS.WAITERS, waiters);
+}
+
+export function loadOrders(): Order[] {
+  return getStorage<Order[]>(KEYS.ORDERS, INITIAL_ORDERS);
+}
+
+export function saveOrders(orders: Order[]): void {
+  setStorage(KEYS.ORDERS, orders);
+}
+
+export function loadKitchenTickets(): KitchenTicket[] {
+  return getStorage<KitchenTicket[]>(KEYS.KITCHEN_TICKETS, INITIAL_KITCHEN_TICKETS);
+}
+
+export function saveKitchenTickets(tickets: KitchenTicket[]): void {
+  setStorage(KEYS.KITCHEN_TICKETS, tickets);
+}
+
+export function loadStockLogs(): StockAdjustmentLog[] {
+  return getStorage<StockAdjustmentLog[]>(KEYS.STOCK_LOGS, []);
+}
+
+export function saveStockLogs(logs: StockAdjustmentLog[]): void {
+  setStorage(KEYS.STOCK_LOGS, logs);
+}
+
+export function loadShifts(): Shift[] {
+  return getStorage<Shift[]>(KEYS.SHIFTS, []);
+}
+
+export function saveShifts(shifts: Shift[]): void {
+  setStorage(KEYS.SHIFTS, shifts);
+}
+
+export function loadCurrentShift(): Shift | null {
+  return getStorage<Shift | null>(KEYS.CURRENT_SHIFT, null);
+}
+
+export function saveCurrentShift(shift: Shift | null): void {
+  setStorage(KEYS.CURRENT_SHIFT, shift);
+}
+
+export function loadGuestRooms(): GuestRoom[] {
+  return getStorage<GuestRoom[]>(KEYS.GUEST_ROOMS, INITIAL_GUEST_ROOMS);
+}
+
+export function saveGuestRooms(rooms: GuestRoom[]): void {
+  setStorage(KEYS.GUEST_ROOMS, rooms);
+}
+
+export const INITIAL_STAFF_USERS: AppUser[] = [
+  {
+    id: 'usr-cashier-01',
+    fullName: 'John Mugisha',
+    email: 'cashier@grandhorizon.com',
+    phone: '+250 788 111 222',
+    role: 'Cashier',
+    status: 'Active',
+    accessStatus: 'Approved',
+    paymentStatus: 'Paid',
+    authorizedBySuperAdmin: true,
+    pinCode: '1234',
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'usr-kitchen-01',
+    fullName: 'Chef Eric Nshuti',
+    email: 'kitchen@grandhorizon.com',
+    phone: '+250 788 333 444',
+    role: 'Kitchen',
+    status: 'Active',
+    accessStatus: 'Approved',
+    paymentStatus: 'Paid',
+    authorizedBySuperAdmin: true,
+    pinCode: '2345',
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'usr-reception-01',
+    fullName: 'Grace Uwase',
+    email: 'reception@grandhorizon.com',
+    phone: '+250 788 555 666',
+    role: 'Receptionist',
+    status: 'Active',
+    accessStatus: 'Approved',
+    paymentStatus: 'Paid',
+    authorizedBySuperAdmin: true,
+    pinCode: '3456',
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'usr-accountant-01',
+    fullName: 'David Habimana',
+    email: 'accountant@grandhorizon.com',
+    phone: '+250 788 777 888',
+    role: 'Accountant',
+    status: 'Active',
+    accessStatus: 'Approved',
+    paymentStatus: 'Paid',
+    authorizedBySuperAdmin: true,
+    pinCode: '4567',
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'usr-manager-01',
+    fullName: 'Patrick Bizimana',
+    email: 'manager@grandhorizon.com',
+    phone: '+250 788 999 000',
+    role: 'Manager',
+    status: 'Active',
+    accessStatus: 'Approved',
+    paymentStatus: 'Paid',
+    authorizedBySuperAdmin: true,
+    pinCode: '5678',
+    createdAt: new Date().toISOString()
+  }
+];
+
+// User Management Functions
+export function loadUsers(): AppUser[] {
+  const users = getStorage<AppUser[]>(KEYS.USERS, INITIAL_STAFF_USERS);
+  // ALWAYS filter out Super Admin to keep Super Admin strictly system-level and database-managed
+  return users.filter(u => !u.isSuperAdmin && u.role !== 'Super Admin');
+}
+
+export function saveUsers(users: AppUser[]): void {
+  const filteredUsers = users.filter(u => !u.isSuperAdmin && u.role !== 'Super Admin');
+  setStorage(KEYS.USERS, filteredUsers);
+}
+
+/**
+ * Super Admin Device & Payment Authorization Helpers
+ */
+export function updateUserAccessAndPayment(userId: string, updates: Partial<AppUser>): void {
+  const users = loadUsers();
+  const updated = users.map(u => {
+    if (u.id === userId) {
+      return { ...u, ...updates };
+    }
+    return u;
+  });
+  saveUsers(updated);
+
+  // If current logged in user is the updated user, update session as well
+  const current = loadCurrentUser();
+  if (current && current.id === userId) {
+    saveCurrentUser({ ...current, ...updates });
+  }
+}
+
+export function grantUserGracePeriod(userId: string, days: number = 7, notes: string = 'Grace period granted by Super Admin to use system while completing payment'): void {
+  const expires = new Date();
+  expires.setDate(expires.getDate() + days);
+
+  updateUserAccessAndPayment(userId, {
+    accessStatus: 'Grace Period',
+    gracePeriodDays: days,
+    accessExpiresAt: expires.toISOString(),
+    paymentNotes: notes,
+    authorizedBySuperAdmin: true,
+    authorizedAt: new Date().toISOString(),
+    sessionRevoked: false
+  });
+}
+
+export function approveUserPaymentAccess(userId: string, notes: string = 'Payment verified and full access authorized by Super Admin'): void {
+  updateUserAccessAndPayment(userId, {
+    accessStatus: 'Approved',
+    paymentStatus: 'Paid',
+    paymentNotes: notes,
+    authorizedBySuperAdmin: true,
+    authorizedAt: new Date().toISOString(),
+    accessExpiresAt: undefined,
+    sessionRevoked: false
+  });
+}
+
+export function lockUserAccess(userId: string, reason: string = 'Payment required / Account locked by Super Admin'): void {
+  updateUserAccessAndPayment(userId, {
+    accessStatus: 'Locked',
+    paymentStatus: 'Unpaid',
+    paymentNotes: reason,
+    sessionRevoked: true
+  });
+}
+
+export function revokeUserSession(userId: string): void {
+  updateUserAccessAndPayment(userId, {
+    sessionRevoked: true
+  });
+}
+
+// Audit Logs Functions
+export function loadAuditLogs(): AuditLog[] {
+  return getStorage<AuditLog[]>(KEYS.AUDIT_LOGS, []);
+}
+
+export function addAuditLog(log: Omit<AuditLog, 'id' | 'timestamp'>): void {
+  const logs = loadAuditLogs();
+  const newLog: AuditLog = {
+    ...log,
+    id: `LOG-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    timestamp: new Date().toISOString()
+  };
+  setStorage(KEYS.AUDIT_LOGS, [newLog, ...logs].slice(0, 10000)); // Keep up to 10000 detailed logs
+}
+
+// Session Functions
+export function loadCurrentUser(): AppUser | null {
+  return getStorage<AppUser | null>(KEYS.CURRENT_USER, null);
+}
+
+export function saveCurrentUser(user: AppUser | null): void {
+  setStorage(KEYS.CURRENT_USER, user);
+}
+
+export function clearCurrentUser(): void {
+  localStorage.removeItem(KEYS.CURRENT_USER);
+}
+
+// Expenses Storage
+export function loadExpenses(): Expense[] {
+  return getStorage<Expense[]>(KEYS.EXPENSES, []);
+}
+
+export function saveExpenses(expenses: Expense[]): void {
+  setStorage(KEYS.EXPENSES, expenses);
+}
+
+export function addExpense(expense: Omit<Expense, 'id' | 'expenseNumber' | 'timestamp'>): Expense {
+  const expenses = loadExpenses();
+  const num = expenses.length + 1001;
+  const newExp: Expense = {
+    ...expense,
+    id: `EXP-${Date.now()}-${Math.floor(Math.random() * 100)}`,
+    expenseNumber: `EXP-${num}`,
+    timestamp: new Date().toISOString()
+  };
+  saveExpenses([newExp, ...expenses]);
+  return newExp;
+}
+
+// Cash Movements Storage
+export function loadCashMovements(): CashMovement[] {
+  return getStorage<CashMovement[]>(KEYS.CASH_MOVEMENTS, []);
+}
+
+export function saveCashMovements(movements: CashMovement[]): void {
+  setStorage(KEYS.CASH_MOVEMENTS, movements);
+}
+
+export function addCashMovement(movement: Omit<CashMovement, 'id' | 'timestamp' | 'date' | 'time'>): CashMovement {
+  const movements = loadCashMovements();
+  const now = new Date();
+  const newMov: CashMovement = {
+    ...movement,
+    id: `CSH-${Date.now()}-${Math.floor(Math.random() * 100)}`,
+    timestamp: now.toISOString(),
+    date: now.toISOString().split('T')[0],
+    time: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  };
+  saveCashMovements([newMov, ...movements]);
+  return newMov;
+}
+
+// Daily Closings Storage
+export function loadDailyClosings(): DailyClosingRecord[] {
+  return getStorage<DailyClosingRecord[]>(KEYS.DAILY_CLOSINGS, []);
+}
+
+export function saveDailyClosings(records: DailyClosingRecord[]): void {
+  setStorage(KEYS.DAILY_CLOSINGS, records);
+}
+
+export function addDailyClosing(record: Omit<DailyClosingRecord, 'id' | 'closedAt'>): DailyClosingRecord {
+  const closings = loadDailyClosings();
+  const newClosing: DailyClosingRecord = {
+    ...record,
+    id: `DCR-${Date.now()}`,
+    closedAt: new Date().toISOString()
+  };
+  saveDailyClosings([newClosing, ...closings]);
+  return newClosing;
+}
+
+// Purchase Orders Storage
+export function loadPurchaseOrders(): PurchaseOrder[] {
+  const raw = localStorage.getItem(KEYS.PURCHASE_ORDERS);
+  if (raw === null) {
+    savePurchaseOrders(INITIAL_PURCHASE_ORDERS);
+    return INITIAL_PURCHASE_ORDERS;
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    return INITIAL_PURCHASE_ORDERS;
+  }
+}
+
+export function savePurchaseOrders(pos: PurchaseOrder[]): void {
+  setStorage(KEYS.PURCHASE_ORDERS, pos);
+}
+
+// Kitchen Ingredients Storage
+export function loadIngredients(): KitchenIngredient[] {
+  const raw = localStorage.getItem(KEYS.KITCHEN_INGREDIENTS);
+  if (raw === null || raw === '[]' || raw === 'null') {
+    saveIngredients(INITIAL_KITCHEN_INGREDIENTS);
+    return INITIAL_KITCHEN_INGREDIENTS;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      if (parsed.length === 0) {
+        saveIngredients(INITIAL_KITCHEN_INGREDIENTS);
+        return INITIAL_KITCHEN_INGREDIENTS;
+      }
+      return parsed;
+    }
+    return INITIAL_KITCHEN_INGREDIENTS;
+  } catch (err) {
+    return INITIAL_KITCHEN_INGREDIENTS;
+  }
+}
+
+export function saveIngredients(ingredients: KitchenIngredient[]): void {
+  localStorage.setItem('hotel_ingredients_init_done', 'true');
+  setStorage(KEYS.KITCHEN_INGREDIENTS, ingredients);
+}
+
+// Stock Movement Records Ledger Storage
+export function loadStockMovementRecords(): StockMovementRecord[] {
+  return getStorage<StockMovementRecord[]>(KEYS.STOCK_MOVEMENT_RECORDS, []);
+}
+
+export function saveStockMovementRecords(records: StockMovementRecord[]): void {
+  setStorage(KEYS.STOCK_MOVEMENT_RECORDS, records);
+}
+
+export function addStockMovementRecord(rec: Omit<StockMovementRecord, 'id' | 'timestamp' | 'date' | 'time'>): StockMovementRecord {
+  const records = loadStockMovementRecords();
+  const now = new Date();
+  const date = now.toISOString().split('T')[0];
+  const time = now.toTimeString().split(' ')[0];
+  const created: StockMovementRecord = {
+    ...rec,
+    id: `MOV-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+    date,
+    time,
+    timestamp: now.toISOString()
+  };
+  saveStockMovementRecords([created, ...records]);
+  return created;
+}
+
+// Kitchen Waste Records Storage
+export function loadWasteRecords(): KitchenWasteRecord[] {
+  return getStorage<KitchenWasteRecord[]>(KEYS.KITCHEN_WASTE_RECORDS, []);
+}
+
+export function saveWasteRecords(records: KitchenWasteRecord[]): void {
+  setStorage(KEYS.KITCHEN_WASTE_RECORDS, records);
+}
+
+export function addWasteRecord(rec: Omit<KitchenWasteRecord, 'id' | 'timestamp' | 'date'>): KitchenWasteRecord {
+  const records = loadWasteRecords();
+  const now = new Date();
+  const date = now.toISOString().split('T')[0];
+  const created: KitchenWasteRecord = {
+    ...rec,
+    id: `WST-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+    date,
+    timestamp: now.toISOString()
+  };
+  saveWasteRecords([created, ...records]);
+  return created;
+}
+
+// Recipes Storage
+export function loadRecipes(): Recipe[] {
+  return getStorage<Recipe[]>(KEYS.RECIPES, []);
+}
+
+export function saveRecipes(recipes: Recipe[]): void {
+  setStorage(KEYS.RECIPES, recipes);
+}
+
+// WhatsApp Settings Storage
+export function loadWhatsAppSettings(): WhatsAppSettings {
+  return getStorage<WhatsAppSettings>(KEYS.WHATSAPP_SETTINGS, INITIAL_WHATSAPP_SETTINGS);
+}
+
+export function saveWhatsAppSettings(settings: WhatsAppSettings): void {
+  setStorage(KEYS.WHATSAPP_SETTINGS, settings);
+}
+
+// WhatsApp Recipients Storage
+export function loadWhatsAppRecipients(): WhatsAppRecipient[] {
+  return getStorage<WhatsAppRecipient[]>(KEYS.WHATSAPP_RECIPIENTS, INITIAL_WHATSAPP_RECIPIENTS);
+}
+
+export function saveWhatsAppRecipients(recipients: WhatsAppRecipient[]): void {
+  setStorage(KEYS.WHATSAPP_RECIPIENTS, recipients);
+}
+
+// Report Delivery Rules Storage
+export function loadReportRules(): ReportDeliveryRule[] {
+  return getStorage<ReportDeliveryRule[]>(KEYS.REPORT_DELIVERY_RULES, INITIAL_REPORT_RULES);
+}
+
+export function saveReportRules(rules: ReportDeliveryRule[]): void {
+  setStorage(KEYS.REPORT_DELIVERY_RULES, rules);
+}
+
+// Report Delivery History Storage
+export function loadReportHistory(): ReportDeliveryHistory[] {
+  return getStorage<ReportDeliveryHistory[]>(KEYS.REPORT_DELIVERY_HISTORY, INITIAL_REPORT_HISTORY);
+}
+
+export function saveReportHistory(history: ReportDeliveryHistory[]): void {
+  setStorage(KEYS.REPORT_DELIVERY_HISTORY, history);
+}
+
+export function addReportHistoryRecord(record: Omit<ReportDeliveryHistory, 'id' | 'createdAt'>): ReportDeliveryHistory {
+  const history = loadReportHistory();
+  const created: ReportDeliveryHistory = {
+    ...record,
+    id: `HIST-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    createdAt: new Date().toISOString()
+  };
+  saveReportHistory([created, ...history]);
+  return created;
+}
+
+// Message Templates Storage
+export function loadMessageTemplates(): MessageTemplate[] {
+  return getStorage<MessageTemplate[]>(KEYS.MESSAGE_TEMPLATES, INITIAL_MESSAGE_TEMPLATES);
+}
+
+export function saveMessageTemplates(templates: MessageTemplate[]): void {
+  setStorage(KEYS.MESSAGE_TEMPLATES, templates);
+}
+
+// Real-Time Notifications Storage
+export function loadNotifications(): NotificationItem[] {
+  return getStorage<NotificationItem[]>(KEYS.NOTIFICATION_ITEMS, INITIAL_NOTIFICATIONS);
+}
+
+export function saveNotifications(notifications: NotificationItem[]): void {
+  setStorage(KEYS.NOTIFICATION_ITEMS, notifications);
+}
+
+export function addNotificationItem(item: Omit<NotificationItem, 'id' | 'createdAt'>): NotificationItem {
+  const items = loadNotifications();
+  const created: NotificationItem = {
+    ...item,
+    id: `NOTIF-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    createdAt: new Date().toISOString()
+  };
+  saveNotifications([created, ...items]);
+  return created;
+}
+
+// Notification Rules Storage
+export function loadNotificationRules(): NotificationRule[] {
+  return getStorage<NotificationRule[]>(KEYS.NOTIFICATION_RULES, INITIAL_NOTIFICATION_RULES);
+}
+
+export function saveNotificationRules(rules: NotificationRule[]): void {
+  setStorage(KEYS.NOTIFICATION_RULES, rules);
+}
+
+// Approval Rules Storage
+export function loadApprovalRules(): ApprovalRule[] {
+  return getStorage<ApprovalRule[]>(KEYS.APPROVAL_RULES, INITIAL_APPROVAL_RULES);
+}
+
+export function saveApprovalRules(rules: ApprovalRule[]): void {
+  setStorage(KEYS.APPROVAL_RULES, rules);
+}
+
+// Approval Requests Storage
+export function loadApprovalRequests(): ApprovalRequest[] {
+  return getStorage<ApprovalRequest[]>(KEYS.APPROVAL_REQUESTS, INITIAL_APPROVAL_REQUESTS);
+}
+
+export function saveApprovalRequests(requests: ApprovalRequest[]): void {
+  setStorage(KEYS.APPROVAL_REQUESTS, requests);
+}
+
+export function addApprovalRequestRecord(req: Omit<ApprovalRequest, 'id' | 'createdAt' | 'updatedAt' | 'referenceNo'>): ApprovalRequest {
+  const requests = loadApprovalRequests();
+  const count = requests.length + 1;
+  const ref = `APR-${new Date().getFullYear()}-${String(count).padStart(3, '0')}`;
+  const now = new Date().toISOString();
+  const created: ApprovalRequest = {
+    ...req,
+    id: `APR-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    referenceNo: ref,
+    createdAt: now,
+    updatedAt: now
+  };
+  saveApprovalRequests([created, ...requests]);
+  return created;
+}
+
+// HR & Payroll Storage
+export function loadEmployees(): Employee[] {
+  return getStorage<Employee[]>(KEYS.EMPLOYEES, INITIAL_EMPLOYEES);
+}
+
+export function saveEmployees(employees: Employee[]): void {
+  setStorage(KEYS.EMPLOYEES, employees);
+}
+
+export function loadSalaryAdvances(): SalaryAdvance[] {
+  return getStorage<SalaryAdvance[]>(KEYS.SALARY_ADVANCES, INITIAL_SALARY_ADVANCES);
+}
+
+export function saveSalaryAdvances(advances: SalaryAdvance[]): void {
+  setStorage(KEYS.SALARY_ADVANCES, advances);
+}
+
+export function loadPayrollRecords(): PayrollRecord[] {
+  return getStorage<PayrollRecord[]>(KEYS.PAYROLL_RECORDS, INITIAL_PAYROLL_RECORDS);
+}
+
+export function savePayrollRecords(records: PayrollRecord[]): void {
+  setStorage(KEYS.PAYROLL_RECORDS, records);
+}
+
+export function loadAttendanceRecords(): AttendanceRecord[] {
+  return getStorage<AttendanceRecord[]>(KEYS.ATTENDANCE_RECORDS, INITIAL_ATTENDANCE_RECORDS);
+}
+
+export function saveAttendanceRecords(records: AttendanceRecord[]): void {
+  setStorage(KEYS.ATTENDANCE_RECORDS, records);
+}
+
+// POS Deposits Storage & Cash Reconciliation
+export function loadPOSDeposits(): POSDepositRecord[] {
+  const initialDeposits: POSDepositRecord[] = [
+    {
+      id: 'DEP-2026-001',
+      depositNumber: 'DEP-1001',
+      date: new Date().toISOString().split('T')[0],
+      timestamp: new Date().toISOString(),
+      cashierName: 'John Mugisha',
+      totalPOSSales: 450000,
+      cashAmount: 250000,
+      mobileMoneyAmount: 150000,
+      cardAmount: 50000,
+      creditAmount: 0,
+      amountDeposited: 450000,
+      depositDestination: 'Bank Account',
+      bankName: 'Bank of Kigali (BK)',
+      bankAccountNo: '00012-3456789-01',
+      depositSlipReference: 'BK-SLIP-99231',
+      varianceAmount: 0,
+      varianceNotes: 'Balanced - Verified by Accountant',
+      receivedByAccountant: 'David Habimana',
+      status: 'Verified & Deposited',
+      notes: 'Morning Shift POS Sales Handover fully deposited.'
+    }
+  ];
+  return getStorage<POSDepositRecord[]>(KEYS.POS_DEPOSITS, initialDeposits);
+}
+
+export function savePOSDeposits(deposits: POSDepositRecord[]): void {
+  setStorage(KEYS.POS_DEPOSITS, deposits);
+}
+
+export function addPOSDeposit(dep: Omit<POSDepositRecord, 'id' | 'depositNumber' | 'timestamp'>): POSDepositRecord {
+  const deposits = loadPOSDeposits();
+  const num = deposits.length + 1001;
+  const newDep: POSDepositRecord = {
+    ...dep,
+    id: `DEP-${Date.now()}-${Math.floor(Math.random() * 100)}`,
+    depositNumber: `DEP-${num}`,
+    timestamp: new Date().toISOString()
+  };
+  savePOSDeposits([newDep, ...deposits]);
+  return newDep;
+}
+
+export function resetAllDataToDefault(initiatingUser?: AppUser | null): boolean {
+  const user = initiatingUser || loadCurrentUser();
+  const isSuperAdmin = Boolean(user?.isSuperAdmin || user?.role === 'Super Admin');
+
+  if (!isSuperAdmin) {
+    console.error('Unauthorized attempt to reset all system data. Only Super Admin can reset data.');
+    return false;
+  }
+
+  localStorage.clear();
+  initializeCleanSlateIfNeeded();
+  return true;
+}
+
+// ==========================================
+// SAAS SUBSCRIPTION & MTN MOMO CLIENT HELPERS
+// ==========================================
+
+export const SAAS_MONTHLY_FEE = 100000; // 100,000 RWF
+export const SAAS_MOMO_MERCHANT_NUMBER = '0726134041'; // Official fixed MTN MoMo recipient
+
+export const INITIAL_BUSINESS: Business = {
+  id: 'biz-primary-01',
+  name: 'Kigali Horizon Lounge & Resort',
+  code: 'BIZ-1001',
+  category: 'Hotel',
+  ownerName: 'System Owner',
+  phone: '+250 726 134 041',
+  email: 'yuskar@gmail.com',
+  momoPaymentNumber: '0726134041',
+  address: 'KG 15 Ave, Kigali, Rwanda',
+  currency: 'RWF',
+  status: 'ACTIVE',
+  subscriptionId: 'SUB-2026-001',
+  createdAt: '2026-08-14T00:00:00.000Z'
+};
+
+export const INITIAL_SUBSCRIPTION: Subscription = {
+  id: 'SUB-2026-001',
+  businessId: 'biz-primary-01',
+  businessName: 'Kigali Horizon Lounge & Resort',
+  planName: 'Monthly SaaS Business License',
+  amount: 100000,
+  currency: 'RWF',
+  status: 'ACTIVE',
+  startDate: '2026-08-14T00:00:00.000Z',
+  expiryDate: '2026-09-14T00:00:00.000Z',
+  gracePeriodDays: 0,
+  lastPaymentDate: '2026-08-14T00:00:00.000Z',
+  paymentReference: 'MOMO-RW-20260814-INIT',
+  transactionReference: 'TXN-MOMO-RW-20260814-INIT',
+  nextPaymentAmount: 100000,
+  createdAt: '2026-08-14T00:00:00.000Z'
+};
+
+export function loadBusinesses(): Business[] {
+  return getStorage<Business[]>(KEYS.BUSINESSES, [INITIAL_BUSINESS]);
+}
+
+export function saveBusinesses(businesses: Business[]): void {
+  setStorage(KEYS.BUSINESSES, businesses);
+}
+
+export function loadCurrentBusiness(): Business {
+  const current = getStorage<Business | null>(KEYS.CURRENT_BUSINESS, null);
+  if (current) return current;
+  const list = loadBusinesses();
+  const first = list[0] || INITIAL_BUSINESS;
+  saveCurrentBusiness(first);
+  return first;
+}
+
+export function saveCurrentBusiness(business: Business): void {
+  setStorage(KEYS.CURRENT_BUSINESS, business);
+}
+
+export function loadSubscriptions(): Subscription[] {
+  return getStorage<Subscription[]>(KEYS.SUBSCRIPTIONS, [INITIAL_SUBSCRIPTION]);
+}
+
+export function saveSubscriptions(subscriptions: Subscription[]): void {
+  setStorage(KEYS.SUBSCRIPTIONS, subscriptions);
+}
+
+export function loadSubscriptionPayments(): SubscriptionPayment[] {
+  const initialPayments: SubscriptionPayment[] = [
+    {
+      id: 'PAY-2026-001',
+      businessId: 'biz-primary-01',
+      businessName: 'Kigali Horizon Lounge & Resort',
+      subscriptionId: 'SUB-2026-001',
+      amount: 100000,
+      currency: 'RWF',
+      paymentMethod: 'MTN MoMo (Rwanda)',
+      payerPhone: '0788123456',
+      recipientPhone: '0726134041',
+      paymentReference: 'MOMO-RW-20260814-INIT',
+      transactionReference: 'TXN-MOMO-RW-20260814-INIT',
+      status: 'SUCCESSFUL',
+      paidAt: '2026-08-14T08:00:00.000Z',
+      verifiedBy: 'MTN MoMo Gateway',
+      durationMonths: 1,
+      createdAt: '2026-08-14T08:00:00.000Z'
+    }
+  ];
+  return getStorage<SubscriptionPayment[]>(KEYS.SUBSCRIPTION_PAYMENTS, initialPayments);
+}
+
+export function saveSubscriptionPayments(payments: SubscriptionPayment[]): void {
+  setStorage(KEYS.SUBSCRIPTION_PAYMENTS, payments);
+}
+
+export function loadSubscriptionOverrides(): SubscriptionOverrideRecord[] {
+  return getStorage<SubscriptionOverrideRecord[]>(KEYS.SUBSCRIPTION_OVERRIDES, []);
+}
+
+export function saveSubscriptionOverrides(overrides: SubscriptionOverrideRecord[]): void {
+  setStorage(KEYS.SUBSCRIPTION_OVERRIDES, overrides);
+}
+
+export function evaluateSubscriptionMetrics(sub?: Subscription | null) {
+  if (!sub || sub.status === 'PENDING_PAYMENT') {
+    return {
+      status: 'PENDING_PAYMENT' as const,
+      daysRemaining: 0,
+      isGrace: false,
+      warningLevel: 'expired' as const,
+      message: 'Initial subscription payment required (100,000 RWF via MTN MoMo 0726134041).'
+    };
+  }
+
+  if (!sub.expiryDate) {
+    return {
+      status: 'EXPIRED' as const,
+      daysRemaining: 0,
+      isGrace: false,
+      warningLevel: 'expired' as const,
+      message: 'Subscription has expired. Please renew for 100,000 RWF.'
+    };
+  }
+
+  const now = Date.now();
+  const exp = new Date(sub.expiryDate).getTime();
+  const diffTime = exp - now;
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  const graceDays = sub.gracePeriodDays || 0;
+  const graceExp = exp + (graceDays * 24 * 60 * 60 * 1000);
+
+  if (now <= exp) {
+    let warningLevel: '7days' | '3days' | '1day' | 'none' = 'none';
+    let message = `Subscription active. ${diffDays} days remaining.`;
+
+    if (diffDays <= 1) {
+      warningLevel = '1day';
+      message = 'Your subscription expires tomorrow! Please renew for 100,000 RWF to avoid service interruption.';
+    } else if (diffDays <= 3) {
+      warningLevel = '3days';
+      message = `Your subscription expires in ${diffDays} days. Please renew for 100,000 RWF to avoid interruption.`;
+    } else if (diffDays <= 7) {
+      warningLevel = '7days';
+      message = `Your subscription expires in ${diffDays} days. Early renewal available.`;
+    }
+
+    return {
+      status: 'ACTIVE' as const,
+      daysRemaining: Math.max(0, diffDays),
+      isGrace: false,
+      warningLevel,
+      message
+    };
+  } else if (now <= graceExp) {
+    const graceDiffDays = Math.ceil((graceExp - now) / (1000 * 60 * 60 * 24));
+    return {
+      status: 'GRACE_PERIOD' as const,
+      daysRemaining: Math.max(0, graceDiffDays),
+      isGrace: true,
+      warningLevel: '1day' as const,
+      message: `Account in Grace Period (${graceDiffDays} days remaining). Please settle payment of 100,000 RWF.`
+    };
+  } else {
+    return {
+      status: 'EXPIRED' as const,
+      daysRemaining: 0,
+      isGrace: false,
+      warningLevel: 'expired' as const,
+      message: 'Your subscription has expired. Please renew for 100,000 RWF to continue using the system.'
+    };
+  }
+}
+
+// API Functions for Backend Communication
+export async function apiRegisterBusiness(data: {
+  businessName: string;
+  ownerName: string;
+  email: string;
+  phone: string;
+  password: string;
+  category?: string;
+  address?: string;
+}) {
+  const res = await fetch('/api/subscription/register-business', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+  return await res.json();
+}
+
+export async function apiInitiateMomoPayment(businessId: string, payerPhone: string) {
+  const res = await fetch('/api/subscription/momo/initiate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ businessId, payerPhone })
+  });
+  return await res.json();
+}
+
+export async function apiVerifyMomoPayment(paymentReference: string) {
+  const res = await fetch(`/api/subscription/momo/verify/${encodeURIComponent(paymentReference)}`);
+  return await res.json();
+}
+
+export async function apiGetBusinessSubscription(businessId: string) {
+  const res = await fetch(`/api/subscription/business/${encodeURIComponent(businessId)}`);
+  return await res.json();
+}
+
+export async function apiSuperAdminOverride(data: {
+  businessId: string;
+  adminEmail: string;
+  adminPassword: string;
+  reason: string;
+  daysGranted: number;
+}) {
+  const res = await fetch('/api/subscription/super-admin/override', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+  return await res.json();
+}
+
+export async function apiSuperAdminSetGracePeriod(businessId: string, graceDays: number) {
+  const res = await fetch('/api/subscription/super-admin/set-grace-period', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ businessId, graceDays })
+  });
+  return await res.json();
+}
+
+export async function apiSuperAdminGetSaaSStats() {
+  const res = await fetch('/api/subscription/super-admin/all-subscriptions');
+  return await res.json();
+}
+
+export async function apiSuperAdminGetMomoConfig() {
+  const res = await fetch('/api/subscription/super-admin/momo-config');
+  return await res.json();
+}
+
+export async function apiSuperAdminSaveMomoConfig(config: any) {
+  const res = await fetch('/api/subscription/super-admin/momo-config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config)
+  });
+  return await res.json();
+}
