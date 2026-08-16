@@ -1,6 +1,13 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { notifyDataChange } from './syncEngine';
 import { mergeArraysByKey } from './serverSync';
+import { 
+  supabase as globalSupabaseClient, 
+  getResolvedSupabaseConfig, 
+  isSupabaseConfigured, 
+  normalizeSupabaseUrl, 
+  validateSupabaseConfig 
+} from './supabase';
 
 export interface SupabaseConfig {
   url: string;
@@ -36,94 +43,73 @@ const LOCAL_KEY_MAP: Record<string, string> = {
 };
 
 export function getSupabaseConfig(): SupabaseConfig {
-  try {
-    const stored = localStorage.getItem(CONFIG_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      if (parsed && typeof parsed === 'object') {
-        const isUrlValid = Boolean(parsed.url && typeof parsed.url === 'string' && parsed.url.startsWith('http') && !parsed.url.includes('xyzcompany'));
-        const isKeyValid = Boolean(parsed.anonKey && typeof parsed.anonKey === 'string' && parsed.anonKey.length > 10);
-
-        return {
-          url: parsed.url || '',
-          anonKey: parsed.anonKey || '',
-          enabled: Boolean(parsed.enabled && isUrlValid && isKeyValid)
-        };
-      }
-    }
-  } catch (err) {
-    // Ignore error
-  }
-
-  // Fallback to VITE env vars if defined
-  const envUrl = (import.meta as any).env?.VITE_SUPABASE_URL || '';
-  const envKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || '';
-
-  const isEnvUrlValid = Boolean(envUrl && typeof envUrl === 'string' && envUrl.startsWith('http') && !envUrl.includes('xyzcompany'));
-  const isEnvKeyValid = Boolean(envKey && typeof envKey === 'string' && envKey.length > 10);
-
+  const resolved = getResolvedSupabaseConfig();
   return {
-    url: envUrl,
-    anonKey: envKey,
-    enabled: Boolean(isEnvUrlValid && isEnvKeyValid)
+    url: resolved.url,
+    anonKey: resolved.anonKey,
+    enabled: resolved.isConfigured
   };
 }
 
 export function saveSupabaseConfig(config: SupabaseConfig): void {
-  localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+  const normalized = normalizeSupabaseUrl(config.url) || config.url.trim();
+  const cleanKey = (config.anonKey || '').trim();
+  
+  localStorage.setItem(CONFIG_KEY, JSON.stringify({
+    url: normalized,
+    anonKey: cleanKey,
+    enabled: config.enabled
+  }));
 }
 
-let cachedClient: SupabaseClient | null = null;
-let cachedConfigKey = '';
-
 export function getSupabaseClient(): SupabaseClient | null {
-  const config = getSupabaseConfig();
-  if (!config.enabled || !config.url || !config.anonKey) {
+  if (!isSupabaseConfigured()) {
     return null;
   }
-
-  const currentKey = `${config.url}_${config.anonKey}`;
-  if (cachedClient && cachedConfigKey === currentKey) {
-    return cachedClient;
-  }
-
-  try {
-    cachedClient = createClient(config.url, config.anonKey);
-    cachedConfigKey = currentKey;
-    return cachedClient;
-  } catch (err) {
-    console.warn('[Supabase Sync] Failed to create client:', err);
-    return null;
-  }
+  return globalSupabaseClient;
 }
 
 export async function testSupabaseConnection(url: string, anonKey: string): Promise<{ success: boolean; message: string }> {
-  if (!url || !anonKey) {
-    return { success: false, message: 'Please enter both Supabase Project URL and Anon API Key.' };
+  const validation = validateSupabaseConfig(url, anonKey);
+  if (!validation.valid) {
+    return { success: false, message: validation.error || 'Invalid Supabase Configuration.' };
   }
 
   try {
-    const client = createClient(url, anonKey);
+    const testClient = createClient(validation.normalizedUrl, validation.cleanKey, {
+      auth: { persistSession: false, autoRefreshToken: false }
+    });
+
     // Attempt a light ping request to check connection
-    const { error } = await client.from('hotel_store').select('key').limit(1);
+    const { error } = await testClient.from('hotel_store').select('key').limit(1);
     
     if (error) {
-      // If table hotel_store doesn't exist yet, try REST health
+      // If table hotel_store doesn't exist yet
       if (error.code === 'PGRST301' || error.message?.includes('relation "public.hotel_store" does not exist') || error.code === '42P01') {
         return { 
           success: true, 
-          message: 'Supabase connected successfully! Note: Table "hotel_store" is not created yet. Click "Create Table Schema" in settings.' 
+          message: 'Supabase connected successfully! Note: Table "hotel_store" is not created yet. Run the SQL schema to enable multi-device sync.' 
         };
       }
+      
       // Permission or auth error
-      if (error.code === 'PGRST301' || error.message?.includes('JWT')) {
-        return { success: false, message: `Auth Error: ${error.message}` };
+      if (error.code === 'PGRST301' || error.message?.toLowerCase().includes('jwt') || error.message?.toLowerCase().includes('apikey') || error.code === 'PGRST300') {
+        return { success: false, message: `Authentication Error: ${error.message}. Please verify your Anon API Key.` };
       }
+
+      // RLS or other database error
+      if (error.code?.startsWith('42') || error.message?.includes('permission')) {
+        return { success: false, message: `Permission/RLS Notice: ${error.message}` };
+      }
+
       return { success: true, message: `Connected to Supabase! (${error.message})` };
     }
 
-    return { success: true, message: 'Connected to Supabase successfully! Ready for multi-device sync.' };
+    return { success: true, message: 'Connected to Supabase successfully! Ready for real-time multi-device sync.' };
   } catch (err: any) {
+    if (err?.message?.includes('Failed to fetch') || err?.name === 'TypeError') {
+      return { success: false, message: `Network error: Could not reach Supabase endpoint at ${validation.normalizedUrl}. Check your internet connection.` };
+    }
     return { success: false, message: err?.message || 'Failed to connect to Supabase.' };
   }
 }
@@ -299,7 +285,8 @@ ALTER TABLE public.inventory_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.stock_movements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.hotel_store ENABLE ROW LEVEL SECURITY;
 
--- Create Security RLS Policies
+-- Note on RLS Security Architecture:
+-- For production isolation, policy conditions can be scoped by business_id or authenticated user tokens.
 DROP POLICY IF EXISTS "Business isolation policy for ingredients" ON public.ingredients;
 CREATE POLICY "Business isolation policy for ingredients" ON public.ingredients FOR ALL USING (true) WITH CHECK (true);
 
@@ -362,7 +349,7 @@ export async function pushAllToSupabase(): Promise<{ success: boolean; message: 
 
     return { success: true, message: 'All local data successfully synchronized to Supabase Cloud!' };
   } catch (err: any) {
-    console.warn('[Supabase Push Note]:', err?.message || err);
+    console.warn('[Supabase Sync]', { operation: 'push', table: 'hotel_store', error: err?.message || err });
     return { success: false, message: err?.message || 'Error pushing to Supabase.' };
   }
 }
@@ -380,7 +367,7 @@ export async function pullAllFromSupabase(): Promise<{ success: boolean; count: 
     const { data, error } = await client.from('hotel_store').select('*');
 
     if (error) {
-      console.warn('[Supabase Pull Note]:', error.message || error);
+      console.warn('[Supabase Sync]', { operation: 'pull', table: 'hotel_store', error: error.message || error });
       return { success: false, count: 0, message: error.message || 'Error pulling from Supabase.' };
     }
 
@@ -444,28 +431,52 @@ export async function pullAllFromSupabase(): Promise<{ success: boolean; count: 
       message: `Successfully pulled ${updatedCount} updated datasets from Supabase Cloud.` 
     };
   } catch (err: any) {
-    console.warn('[Supabase Pull Note]:', err?.message || err);
+    console.warn('[Supabase Sync]', { operation: 'pull', table: 'hotel_store', error: err?.message || err });
     return { success: false, count: 0, message: err?.message || 'Error pulling from Supabase.' };
   }
 }
+
+let consecutiveSyncErrors = 0;
+const MAX_CONSECUTIVE_SYNC_ERRORS = 4;
 
 /**
  * Start Supabase Background Polling (Every 4 seconds)
  */
 export function startSupabaseSyncPolling(intervalMs: number = 4000): () => void {
-  const config = getSupabaseConfig();
-  if (!config.enabled) {
+  if (!isSupabaseConfigured()) {
     return () => {};
   }
 
-  // Initial pull
-  pullAllFromSupabase();
+  consecutiveSyncErrors = 0;
 
-  const timer = setInterval(() => {
-    pullAllFromSupabase();
+  // Initial pull
+  pullAllFromSupabase().then((res) => {
+    if (!res.success && res.message) {
+      consecutiveSyncErrors++;
+    } else {
+      consecutiveSyncErrors = 0;
+    }
+  });
+
+  const timer = setInterval(async () => {
+    if (consecutiveSyncErrors >= MAX_CONSECUTIVE_SYNC_ERRORS) {
+      // Pause polling if repeatedly failing to avoid spamming console/network
+      return;
+    }
+
+    const res = await pullAllFromSupabase();
+    if (!res.success && res.message) {
+      consecutiveSyncErrors++;
+      if (consecutiveSyncErrors >= MAX_CONSECUTIVE_SYNC_ERRORS) {
+        console.warn(`[Supabase Sync] Background polling paused after ${MAX_CONSECUTIVE_SYNC_ERRORS} consecutive failures. Polling will resume on next manual sync or page refresh.`);
+      }
+    } else {
+      consecutiveSyncErrors = 0;
+    }
   }, intervalMs);
 
   return () => {
     clearInterval(timer);
   };
 }
+
