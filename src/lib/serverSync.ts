@@ -128,17 +128,28 @@ const LOCAL_KEY_MAP: Record<string, string> = {
 };
 
 let isSyncing = false;
+let serverSyncErrorCount = 0;
 
 /**
  * Pulls all synchronized hotel database state from central server and updates localStorage.
  */
 export async function pullServerState(): Promise<boolean> {
   if (isSyncing) return false;
+  // If consecutive server errors occurred, throttle checks
+  if (serverSyncErrorCount >= 3 && serverSyncErrorCount % 10 !== 0) {
+    serverSyncErrorCount++;
+    return false;
+  }
+
   isSyncing = true;
   try {
     const res = await fetch(`${API_BASE}/all`);
-    if (!res.ok) throw new Error('Failed to reach sync server');
+    if (!res.ok) {
+      serverSyncErrorCount++;
+      return false;
+    }
     
+    serverSyncErrorCount = 0;
     const { success, data } = await res.json();
     if (success && data) {
       let hasChanges = false;
@@ -193,8 +204,8 @@ export async function pullServerState(): Promise<boolean> {
       }
       return true;
     }
-  } catch (err) {
-    console.warn('[Server Sync] Fetch server state warning:', err);
+  } catch {
+    serverSyncErrorCount++;
   } finally {
     isSyncing = false;
   }
@@ -212,8 +223,8 @@ export async function pushKeyToServer(entityKey: string, value: any): Promise<vo
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ key: entityKey, value })
     });
-  } catch (err) {
-    console.warn(`[Server Sync] Push error for key ${entityKey}:`, err);
+  } catch {
+    // Silent fail for non-blocking local push
   }
 }
 
@@ -227,8 +238,8 @@ export async function pushFullStateToServer(fullState: Record<string, any>): Pro
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(fullState)
     });
-  } catch (err) {
-    console.warn('[Server Sync] Push full state error:', err);
+  } catch {
+    // Silent fail for non-blocking local push
   }
 }
 

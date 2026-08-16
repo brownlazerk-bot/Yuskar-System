@@ -182,49 +182,6 @@ export async function loginUser(email: string, password: string): Promise<LoginR
     return { success: false, error: 'Email and password are required.' };
   }
 
-  // 1. Secure Server-Side Proxy Authentication (Keeps credentials hidden from client bundle)
-  try {
-    const res = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: cleanEmail, password: cleanPassword })
-    });
-
-    const data = await res.json();
-
-    if (res.ok && data.success && data.user) {
-      saveCurrentUser(data.user);
-      await logAudit({
-        userId: data.user.id,
-        userName: data.user.fullName,
-        userRole: data.user.role,
-        userEmail: data.user.email,
-        action: 'User Sign In',
-        category: 'Auth',
-        details: `User ${data.user.fullName} signed in via server proxy (${data.user.role}).`
-      });
-      return {
-        success: true,
-        user: data.user,
-        business: data.business,
-        subscription: data.subscription
-      };
-    }
-
-    if (res.status === 401 || (data.error && !data.error.includes('fetch'))) {
-      return { success: false, error: data.error || 'Invalid email address or password.' };
-    }
-  } catch (serverErr) {
-    console.warn('[Server Auth Fallback]:', serverErr);
-  }
-
-  if (!isSupabaseConfigured()) {
-    return {
-      success: false,
-      error: 'Authentication failed. Please verify your email and password.'
-    };
-  }
-
   try {
     const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
       email: cleanEmail,
@@ -232,12 +189,13 @@ export async function loginUser(email: string, password: string): Promise<LoginR
     });
 
     if (authError || !authData?.user) {
+      // If direct Supabase signIn returned an error, check if server proxy has an answer or give clean user message
       const msg = authError?.message || '';
-      let userFriendlyErr = msg || 'Invalid email address or password. Please verify your credentials.';
+      let userFriendlyErr = msg || 'Invalid email address or password.';
       if (msg.includes('Email not confirmed')) {
         userFriendlyErr = 'Your email address is not confirmed yet in Supabase. In Supabase Dashboard -> Authentication -> Users, click the user and select "Confirm email", or disable Email Confirmations under Auth Providers.';
-      } else if (msg.includes('Invalid login credentials')) {
-        userFriendlyErr = 'Invalid email address or password. Please verify that the password matches what you set in Supabase Authentication.';
+      } else if (msg.includes('Invalid login credentials') || msg.includes('invalid grant')) {
+        userFriendlyErr = 'Invalid email address or password. Please verify that your password matches your Supabase user account.';
       }
       return { 
         success: false, 

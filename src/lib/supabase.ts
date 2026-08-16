@@ -4,21 +4,24 @@ export interface ResolvedSupabaseConfig {
   url: string;
   anonKey: string;
   isConfigured: boolean;
-  source: 'Vercel / Vite Environment' | 'Local Configuration' | 'Unconfigured';
+  source: 'Vercel / Vite Environment' | 'Local Configuration' | 'Default Project Configuration' | 'Unconfigured';
   error?: string;
 }
 
+const DEFAULT_PROJECT_URL = 'https://ywwffomhbapzguaiyneg.supabase.co';
+const DEFAULT_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl3d2Zmb21oYmFwemd1YWl5bmVnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc4MzMwMTksImV4cCI6MjA5MzQwOTAxOX0.Zbol4YXyM1P3YqAXD2ro2moiqhBv55G8HmW3mCZQcMI';
+
 /**
  * Normalizes a Supabase Project URL:
- * - Strips leading/trailing whitespace & quotes
+ * - Strips leading/trailing whitespace, quotes, backticks
  * - Prepends https:// if protocol is missing
- * - Removes accidental API paths (/rest/v1, /auth/v1, /storage/v1, etc.)
- * - Returns only the root project URL: https://PROJECT_REF.supabase.co
+ * - Drops all subpaths, including /rest/v1, /auth/v1, /storage/v1, etc.
+ * - Guarantees the return value is strictly the root origin: https://<project-ref>.supabase.co
  */
 export function normalizeSupabaseUrl(rawUrl: string | null | undefined): string | null {
   if (!rawUrl || typeof rawUrl !== 'string') return null;
 
-  let cleaned = rawUrl.trim().replace(/^["']+|["']+$/g, '');
+  let cleaned = rawUrl.trim().replace(/^["'`]+|["'`]+$/g, '');
   if (!cleaned) return null;
 
   // Add https protocol if omitted
@@ -37,12 +40,13 @@ export function normalizeSupabaseUrl(rawUrl: string | null | undefined): string 
       return null;
     }
 
-    // Ensure there is a valid domain/host
+    // Ensure there is a valid domain/host with at least one dot
     if (!parsed.hostname || !parsed.hostname.includes('.')) {
       return null;
     }
 
-    // Always return root origin (e.g. https://ywwffomhbapzguaiyneg.supabase.co)
+    // ALWAYS return strictly the origin (protocol + host)
+    // No trailing slash, no path (/rest/v1), no query, no hash.
     return `${parsed.protocol}//${parsed.host}`;
   } catch {
     return null;
@@ -66,7 +70,7 @@ export function validateSupabaseConfig(
     };
   }
 
-  const cleanKey = (rawKey || '').trim().replace(/^["']+|["']+$/g, '');
+  const cleanKey = (rawKey || '').trim().replace(/^["'`]+|["'`]+$/g, '');
   if (!cleanKey || cleanKey.length < 20 || cleanKey.includes('placeholder')) {
     return {
       valid: false,
@@ -83,19 +87,16 @@ export function validateSupabaseConfig(
   };
 }
 
-const FALLBACK_URL = 'https://placeholder-project.supabase.co';
-const FALLBACK_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBsYWNlaG9sZGVyIiwicm9sZSI6ImFub24iLCJpYXQiOjE2MDAwMDAwMDAsImV4cCI6MjAwMDAwMDAwMH0.placeholder';
-
 /**
  * Resolves Supabase configuration with strict priority:
  * 1. VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY (Vercel / Vite Environment)
- * 2. Saved localStorage configuration (Only if environment variables are not provided)
- * 3. Safe fallback placeholder
+ * 2. Saved localStorage configuration (Sanitized and normalized on read)
+ * 3. Default Project Credentials
  */
 export function getResolvedSupabaseConfig(): ResolvedSupabaseConfig {
   // PRIORITY 1: Environment Variables (Vercel / Vite)
-  const envRawUrl = (((import.meta as any).env?.VITE_SUPABASE_URL as string) || '').trim();
-  const envRawKey = (((import.meta as any).env?.VITE_SUPABASE_ANON_KEY as string) || '').trim();
+  const envRawUrl = (((import.meta as any).env?.VITE_SUPABASE_URL as string) || ((import.meta as any).env?.SUPABASE_URL as string) || '').trim();
+  const envRawKey = (((import.meta as any).env?.VITE_SUPABASE_ANON_KEY as string) || ((import.meta as any).env?.SUPABASE_ANON_KEY as string) || '').trim();
 
   if (envRawUrl && envRawKey) {
     const validation = validateSupabaseConfig(envRawUrl, envRawKey);
@@ -109,7 +110,7 @@ export function getResolvedSupabaseConfig(): ResolvedSupabaseConfig {
     }
   }
 
-  // PRIORITY 2: LocalStorage (Only if env vars not provided)
+  // PRIORITY 2: LocalStorage (Only if env vars not provided, with auto-sanitization)
   if (typeof window !== 'undefined') {
     try {
       const stored = localStorage.getItem('hotel_supabase_config');
@@ -118,6 +119,14 @@ export function getResolvedSupabaseConfig(): ResolvedSupabaseConfig {
         if (parsed && typeof parsed === 'object') {
           const validation = validateSupabaseConfig(parsed.url, parsed.anonKey);
           if (validation.valid && parsed.enabled !== false) {
+            // Auto-heal localStorage if stored value had /rest/v1 or unnormalized URL
+            if (parsed.url !== validation.normalizedUrl || parsed.anonKey !== validation.cleanKey) {
+              localStorage.setItem('hotel_supabase_config', JSON.stringify({
+                url: validation.normalizedUrl,
+                anonKey: validation.cleanKey,
+                enabled: true
+              }));
+            }
             return {
               url: validation.normalizedUrl,
               anonKey: validation.cleanKey,
@@ -132,10 +141,20 @@ export function getResolvedSupabaseConfig(): ResolvedSupabaseConfig {
     }
   }
 
-  // PRIORITY 3: Safe Unconfigured Fallback
+  // PRIORITY 3: Default Project Configuration
+  const defaultValidation = validateSupabaseConfig(DEFAULT_PROJECT_URL, DEFAULT_ANON_KEY);
+  if (defaultValidation.valid) {
+    return {
+      url: defaultValidation.normalizedUrl,
+      anonKey: defaultValidation.cleanKey,
+      isConfigured: true,
+      source: 'Default Project Configuration'
+    };
+  }
+
   return {
-    url: FALLBACK_URL,
-    anonKey: FALLBACK_KEY,
+    url: DEFAULT_PROJECT_URL,
+    anonKey: DEFAULT_ANON_KEY,
     isConfigured: false,
     source: 'Unconfigured'
   };
