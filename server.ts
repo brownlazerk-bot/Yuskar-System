@@ -91,6 +91,37 @@ function readServerDb(): Record<string, any> {
     subscriptionPayments: [],
     subscriptionOverrides: [],
     usedTransactionReferences: [],
+    platformPaymentSettings: {
+      enableMomo: true,
+      momoNumber: '0726134041',
+      momoAccountName: 'Theogene / YusKar Empire',
+      momoMerchantCode: '0726134041',
+      momoUssdCode: '*182*8*1*0726134041#',
+      enableAirtel: true,
+      airtelMoneyNumber: '+250 730 000 000',
+      airtelAccountName: 'YusKar Empire',
+      enableBankTransfer: true,
+      primaryBankName: 'Bank of Kigali (BK)',
+      primaryBankAccount: '00040-0694038-34',
+      primaryAccountName: 'YUSKAR EMPIRE LTD',
+      primaryBranch: 'Kigali Head Office',
+      primarySwiftCode: 'BKRWRWRW',
+      secondaryBankName: 'Equity Bank Rwanda',
+      secondaryBankAccount: '4001211234567',
+      secondaryAccountName: 'YUSKAR EMPIRE LTD',
+      enableCardPayment: true,
+      cardGatewayName: 'Visa, Mastercard & Online Card Terminal',
+      cardPaymentLink: 'https://pay.yuskar.rw/checkout',
+      cardInstructions: 'Instant card payment via Visa, Mastercard, or UnionPay with instant automated system activation.',
+      defaultBonusDays: 14,
+      enableAutoBonusOnRegister: true,
+      supportPhone: '+250 726 134 041',
+      supportEmail: 'yuskarshop@gmail.com',
+      paymentInstructions: 'Please make payment using MTN Mobile Money, Airtel Money, Bank Transfer, or Credit/Debit Card to the official platform accounts. Enter your Business Name/Code as payment reference.',
+      monthlyFee: 100000,
+      currency: 'RWF',
+      updatedAt: new Date().toISOString()
+    },
     momoConfig: {
       targetEnvironment: process.env.MTN_MOMO_ENVIRONMENT || 'sandbox',
       subscriptionKey: process.env.MTN_MOMO_SUBSCRIPTION_KEY || '',
@@ -849,7 +880,116 @@ app.post('/api/subscription/super-admin/override', (req, res) => {
   }
 });
 
-// 7. Super Admin: Set Grace Period Days
+// 7. Super Admin: Grant Free Bonus Days to Business
+app.post('/api/subscription/super-admin/grant-bonus', (req, res) => {
+  try {
+    const { businessId, bonusDays, reason, adminName, adminEmail } = req.body;
+    if (!businessId) {
+      return res.status(400).json({ success: false, error: 'Business ID is required' });
+    }
+
+    const days = Math.max(1, parseInt(bonusDays, 10) || 7);
+    const businesses = dbState.businesses || [];
+    const subscriptions = dbState.subscriptions || [];
+
+    const biz = businesses.find((b: any) => b.id === businessId);
+    if (!biz) {
+      return res.status(404).json({ success: false, error: 'Business not found' });
+    }
+
+    let sub = subscriptions.find((s: any) => s.businessId === businessId);
+    const now = new Date();
+    let baseExpiry = now.getTime();
+    if (sub && sub.expiryDate) {
+      const curExp = new Date(sub.expiryDate).getTime();
+      if (curExp > now.getTime()) {
+        baseExpiry = curExp;
+      }
+    }
+
+    const newExpiry = new Date(baseExpiry + days * 24 * 60 * 60 * 1000);
+
+    biz.status = 'ACTIVE';
+    biz.bonusDays = (biz.bonusDays || 0) + days;
+    biz.updatedAt = now.toISOString();
+
+    if (sub) {
+      sub.status = 'ACTIVE';
+      sub.expiryDate = newExpiry.toISOString();
+      sub.expiresAt = newExpiry.toISOString();
+      sub.bonusDaysGranted = (sub.bonusDaysGranted || 0) + days;
+      sub.bonusReason = reason || 'Super Admin Bonus Activation';
+      sub.isBonusActive = true;
+      sub.paymentMethod = sub.paymentMethod || 'BONUS_GRANT';
+      sub.updatedAt = now.toISOString();
+    } else {
+      sub = {
+        id: `SUB-${Date.now()}`,
+        businessId: biz.id,
+        businessName: biz.name,
+        status: 'ACTIVE',
+        startDate: now.toISOString(),
+        expiryDate: newExpiry.toISOString(),
+        expiresAt: newExpiry.toISOString(),
+        bonusDaysGranted: days,
+        bonusReason: reason || 'Super Admin Bonus Activation',
+        isBonusActive: true,
+        amount: 100000,
+        monthlyFee: 100000,
+        currency: 'RWF',
+        paymentMethod: 'BONUS_GRANT',
+        createdAt: now.toISOString()
+      };
+      subscriptions.unshift(sub);
+      dbState.subscriptions = subscriptions;
+    }
+
+    const overrideRecord = {
+      id: `bonus-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
+      businessId: biz.id,
+      businessName: biz.name,
+      grantedByAdmin: adminName || 'Super Admin',
+      adminEmail: adminEmail || 'yuskar@gmail.com',
+      reason: `[BONUS ACTIVATION] ${reason || 'Free bonus days activation'}`,
+      startDate: now.toISOString(),
+      expiryDate: newExpiry.toISOString(),
+      daysGranted: days,
+      isBonus: true,
+      timestamp: now.toISOString()
+    };
+
+    if (!dbState.subscriptionOverrides) dbState.subscriptionOverrides = [];
+    dbState.subscriptionOverrides.unshift(overrideRecord);
+
+    if (!dbState.auditLogs) dbState.auditLogs = [];
+    dbState.auditLogs.unshift({
+      id: `log-bonus-${Date.now()}`,
+      userId: 'super-admin',
+      userName: adminName || 'Super Admin',
+      userRole: 'Super Admin',
+      userEmail: adminEmail || 'yuskar@gmail.com',
+      businessId: biz.id,
+      action: 'Grant Bonus Days',
+      category: 'Subscription',
+      details: `Granted ${days} free bonus days to "${biz.name}". Subscription valid until ${newExpiry.toLocaleDateString()}. Reason: ${reason}`,
+      timestamp: now.toISOString()
+    });
+
+    persistState();
+
+    res.json({
+      success: true,
+      message: `Bonus granted successfully! ${days} free days added to ${biz.name}. Access active until ${newExpiry.toLocaleDateString()}.`,
+      business: biz,
+      subscription: sub,
+      overrideRecord
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 8. Super Admin: Set Grace Period Days
 app.post('/api/subscription/super-admin/set-grace-period', (req, res) => {
   try {
     const { businessId, graceDays } = req.body;
@@ -990,6 +1130,64 @@ app.post('/api/subscription/super-admin/momo-config', (req, res) => {
     };
     persistState();
     res.json({ success: true, message: 'MTN MoMo API settings updated securely' });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 10. Platform Payment Receiving Accounts & Bank Settings
+app.get('/api/subscription/super-admin/payment-accounts', (_req, res) => {
+  const settings = dbState.platformPaymentSettings || {
+    momoNumber: '0726134041',
+    momoAccountName: 'Theogene / YusKar Empire',
+    momoMerchantCode: '0726134041',
+    momoUssdCode: '*182*8*1*0726134041#',
+    airtelMoneyNumber: '+250 730 000 000',
+    airtelAccountName: 'YusKar Empire',
+    primaryBankName: 'Bank of Kigali (BK)',
+    primaryBankAccount: '00040-0694038-34',
+    primaryAccountName: 'YUSKAR EMPIRE LTD',
+    primaryBranch: 'Kigali Head Office',
+    primarySwiftCode: 'BKRWRWRW',
+    secondaryBankName: 'Equity Bank Rwanda',
+    secondaryBankAccount: '4001211234567',
+    secondaryAccountName: 'YUSKAR EMPIRE LTD',
+    supportPhone: '+250 726 134 041',
+    supportEmail: 'yuskarshop@gmail.com',
+    paymentInstructions: 'Please make payment using MTN Mobile Money or direct Bank Transfer to the official accounts below. Enter your Business Name as payment reference.',
+    monthlyFee: 100000,
+    currency: 'RWF',
+    updatedAt: new Date().toISOString()
+  };
+  res.json({ success: true, settings });
+});
+
+app.post('/api/subscription/super-admin/payment-accounts', (req, res) => {
+  try {
+    const newSettings = req.body;
+    if (!newSettings || typeof newSettings !== 'object') {
+      return res.status(400).json({ success: false, error: 'Invalid settings payload' });
+    }
+
+    dbState.platformPaymentSettings = {
+      ...(dbState.platformPaymentSettings || {}),
+      ...newSettings,
+      updatedAt: new Date().toISOString()
+    };
+
+    // Keep merchantPhone and momoPaymentNumber in sync across global state
+    if (newSettings.momoNumber) {
+      if (dbState.momoConfig) {
+        dbState.momoConfig.merchantPhone = newSettings.momoNumber;
+      }
+    }
+
+    persistState();
+    res.json({ 
+      success: true, 
+      message: 'Payment receiving numbers and bank accounts updated successfully',
+      settings: dbState.platformPaymentSettings 
+    });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

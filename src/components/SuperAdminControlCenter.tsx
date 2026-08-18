@@ -364,10 +364,10 @@ export const SuperAdminControlCenter: React.FC<SuperAdminControlCenterProps> = (
       category: newBizType,
       type: newBizType as any,
       ownerName: newBizOwnerName.trim(),
-      ownerEmail: newBizOwnerEmail.trim().toLowerCase(),
+      ownerEmail: (newBizOwnerEmail || '').trim().toLowerCase(),
       ownerPhone: newBizOwnerPhone.trim() || '+250 788 000 000',
       phone: newBizOwnerPhone.trim() || '+250 788 000 000',
-      email: newBizOwnerEmail.trim().toLowerCase(),
+      email: (newBizOwnerEmail || '').trim().toLowerCase(),
       momoPaymentNumber: sysMomoMerchantNumber,
       address: newBizAddress.trim() || 'Kigali, Rwanda',
       currency: 'RWF',
@@ -518,7 +518,7 @@ export const SuperAdminControlCenter: React.FC<SuperAdminControlCenterProps> = (
       return;
     }
 
-    const cleanEmail = newUserEmail.trim().toLowerCase();
+    const cleanEmail = (newUserEmail || '').trim().toLowerCase();
     const isSuperAdminRole = newUserRole === 'Super Admin';
     const cleanBizId = isSuperAdminRole ? undefined : (newUserBizId || (businesses[0]?.id || 'biz-primary-01'));
 
@@ -1005,22 +1005,24 @@ export const SuperAdminControlCenter: React.FC<SuperAdminControlCenterProps> = (
   // FILTERED DATASETS
   // ==============================================================================
   const filteredBusinesses = useMemo(() => {
+    const q = (bizSearch || '').toLowerCase();
     return businesses.filter(b => {
       const matchSearch = 
-        b.name.toLowerCase().includes(bizSearch.toLowerCase()) ||
-        b.ownerName.toLowerCase().includes(bizSearch.toLowerCase()) ||
-        b.email.toLowerCase().includes(bizSearch.toLowerCase()) ||
-        b.phone.includes(bizSearch);
+        (b.name || '').toLowerCase().includes(q) ||
+        (b.ownerName || '').toLowerCase().includes(q) ||
+        (b.email || '').toLowerCase().includes(q) ||
+        (b.phone || '').includes(bizSearch);
       const matchStatus = bizStatusFilter === 'ALL' || b.status === bizStatusFilter;
       return matchSearch && matchStatus;
     });
   }, [businesses, bizSearch, bizStatusFilter]);
 
   const filteredUsers = useMemo(() => {
+    const q = (userSearch || '').toLowerCase();
     return users.filter(u => {
       const matchSearch = 
-        u.fullName.toLowerCase().includes(userSearch.toLowerCase()) ||
-        u.email.toLowerCase().includes(userSearch.toLowerCase()) ||
+        (u.fullName || '').toLowerCase().includes(q) ||
+        (u.email || '').toLowerCase().includes(q) ||
         (u.phone && u.phone.includes(userSearch));
       const matchRole = userRoleFilter === 'ALL' || u.role === userRoleFilter;
       const matchBiz = userBizFilter === 'ALL' || u.businessId === userBizFilter;
@@ -1029,22 +1031,24 @@ export const SuperAdminControlCenter: React.FC<SuperAdminControlCenterProps> = (
   }, [users, userSearch, userRoleFilter, userBizFilter]);
 
   const filteredSubscriptions = useMemo(() => {
+    const q = (subSearch || '').toLowerCase();
     return subscriptions.filter(s => {
       const matchSearch = 
-        s.businessName.toLowerCase().includes(subSearch.toLowerCase()) ||
-        s.planName.toLowerCase().includes(subSearch.toLowerCase()) ||
-        s.businessId.toLowerCase().includes(subSearch.toLowerCase());
+        (s.businessName || '').toLowerCase().includes(q) ||
+        (s.planName || '').toLowerCase().includes(q) ||
+        (s.businessId || '').toLowerCase().includes(q);
       const matchStatus = subStatusFilter === 'ALL' || s.status === subStatusFilter;
       return matchSearch && matchStatus;
     });
   }, [subscriptions, subSearch, subStatusFilter]);
 
   const filteredPayments = useMemo(() => {
+    const q = (paySearch || '').toLowerCase();
     return payments.filter(p => {
       const matchSearch = 
-        p.businessName.toLowerCase().includes(paySearch.toLowerCase()) ||
-        (p.paymentReference && p.paymentReference.toLowerCase().includes(paySearch.toLowerCase())) ||
-        (p.transactionReference && p.transactionReference.toLowerCase().includes(paySearch.toLowerCase())) ||
+        (p.businessName || '').toLowerCase().includes(q) ||
+        (p.paymentReference && p.paymentReference.toLowerCase().includes(q)) ||
+        (p.transactionReference && p.transactionReference.toLowerCase().includes(q)) ||
         (p.payerPhone && p.payerPhone.includes(paySearch));
       const matchStatus = payStatusFilter === 'ALL' || p.status === payStatusFilter;
       return matchSearch && matchStatus;
@@ -1052,11 +1056,12 @@ export const SuperAdminControlCenter: React.FC<SuperAdminControlCenterProps> = (
   }, [payments, paySearch, payStatusFilter]);
 
   const filteredAuditLogs = useMemo(() => {
+    const q = (auditSearch || '').toLowerCase();
     return auditLogs.filter(l => {
       const matchSearch = 
-        l.action.toLowerCase().includes(auditSearch.toLowerCase()) ||
-        l.userName.toLowerCase().includes(auditSearch.toLowerCase()) ||
-        l.details.toLowerCase().includes(auditSearch.toLowerCase());
+        (l.action || '').toLowerCase().includes(q) ||
+        (l.userName || '').toLowerCase().includes(q) ||
+        (l.details || '').toLowerCase().includes(q);
       const matchCategory = auditCategoryFilter === 'ALL' || l.category === auditCategoryFilter;
       return matchSearch && matchCategory;
     });

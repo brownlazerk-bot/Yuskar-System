@@ -31,7 +31,10 @@ export const PaymentAuthorizationGate: React.FC<PaymentAuthorizationGateProps> =
 
     setTimeout(() => {
       const allUsers = loadUsers();
-      const freshUser = allUsers.find(u => u.id === currentUser.id || u.email.toLowerCase() === currentUser.email.toLowerCase());
+      const freshUser = allUsers.find(u => 
+        u.id === currentUser.id || 
+        (u.email && currentUser.email && u.email.toLowerCase() === currentUser.email.toLowerCase())
+      );
 
       if (freshUser) {
         // Check if grace period is active

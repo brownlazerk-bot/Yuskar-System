@@ -67,11 +67,11 @@ export const IngredientYieldAnalyzer: React.FC<IngredientYieldAnalyzerProps> = (
     }
 
     // Default intelligent recipe matching based on name/category
-    const nameLower = item.name.toLowerCase();
+    const nameLower = (item.name || '').toLowerCase();
     const fallbackRecipe: RecipeIngredient[] = [];
 
     const findIng = (term: string) => 
-      ingredients.find(i => i.name.toLowerCase().includes(term.toLowerCase()));
+      ingredients.find(i => (i.name || '').toLowerCase().includes((term || '').toLowerCase()));
 
     const foil = findIng('foil') || findIng('aluminium') || findIng('aluminum');
 
@@ -129,7 +129,10 @@ export const IngredientYieldAnalyzer: React.FC<IngredientYieldAnalyzerProps> = (
 
         const breakdown = recipe.map(rItem => {
           if (rItem.active === false) return null;
-          const ing = ingredients.find(g => g.id === rItem.ingredientId || g.name.toLowerCase() === rItem.ingredientName.toLowerCase());
+          const ing = ingredients.find(g => 
+            g.id === rItem.ingredientId || 
+            (g.name && rItem.ingredientName && g.name.toLowerCase() === rItem.ingredientName.toLowerCase())
+          );
 
           const effQty = calculateEffectiveRecipeQty(rItem.quantity, rItem.wastePercentage || 0, rItem.yieldPercentage || 100);
           const storeQtyNeeded = convertRecipeQtyToStoreQty(effQty, rItem.unit, ing?.unit || 'Kg', ing?.conversionRate);
@@ -234,9 +237,11 @@ export const IngredientYieldAnalyzer: React.FC<IngredientYieldAnalyzerProps> = (
 
   // Filtered List
   const filteredAnalyses = useMemo(() => {
+    const q = (searchTerm || '').toLowerCase();
     return yieldAnalyses.filter(item => {
-      const matchesSearch = item.menuItem.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.bottleneckIngredientName.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesSearch = 
+        (item.menuItem?.name || '').toLowerCase().includes(q) ||
+        (item.bottleneckIngredientName || '').toLowerCase().includes(q);
       
       const matchesCat = selectedCategory === 'All' || item.menuItem.category === selectedCategory || item.menuItem.foodCategory === selectedCategory;
 
@@ -252,7 +257,9 @@ export const IngredientYieldAnalyzer: React.FC<IngredientYieldAnalyzerProps> = (
   // Handle Quick Order for Bottleneck Ingredient
   const handleOrderBottleneck = (analysis: RecipeYieldAnalysis) => {
     const ingName = analysis.bottleneckIngredientName;
-    const ing = ingredients.find(g => g.name.toLowerCase() === ingName.toLowerCase());
+    const ing = ingredients.find(g => 
+      g.name && ingName && g.name.toLowerCase() === ingName.toLowerCase()
+    );
 
     if (onCreatePurchaseOrder) {
       onCreatePurchaseOrder({

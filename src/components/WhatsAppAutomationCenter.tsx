@@ -469,7 +469,10 @@ export const WhatsAppAutomationCenter: React.FC<WhatsAppAutomationCenterProps> =
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {recipients
-                  .filter(r => r.fullName.toLowerCase().includes(searchFilter.toLowerCase()) || r.phoneNumber.includes(searchFilter))
+                  .filter(r => 
+                    (r.fullName || '').toLowerCase().includes((searchFilter || '').toLowerCase()) || 
+                    (r.phoneNumber || '').includes(searchFilter || '')
+                  )
                   .map((rec) => (
                     <tr key={rec.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40">
                       <td className="p-4 font-bold">{rec.fullName}</td>

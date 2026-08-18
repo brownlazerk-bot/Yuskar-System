@@ -2,6 +2,8 @@ import { createClient } from '@supabase/supabase-js';
 
 type ApiRequest = {
   method?: string;
+  query?: Record<string, string | string[]>;
+  headers?: Record<string, string>;
   body?: any;
 };
 
@@ -37,51 +39,64 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     return res.status(200).end();
   }
 
-  // GET: Pull all keys from hotel_store
+  const queryBiz = typeof req.query?.business_id === 'string' ? req.query.business_id : (typeof req.query?.businessId === 'string' ? req.query.businessId : undefined);
+  const headerBiz = req.headers?.['x-business-id'];
+  const bodyBiz = req.body?.business_id || req.body?.businessId;
+  const businessId = queryBiz || headerBiz || bodyBiz || 'biz-1786805821046';
+
+  // GET: Pull all keys from hotel_store for the specified business
   if (req.method === 'GET') {
     try {
-      const { data, error } = await supabase.from('hotel_store').select('*');
+      const { data, error } = await supabase
+        .from('hotel_store')
+        .select('*')
+        .eq('business_id', businessId);
+
       if (error) {
         // Return empty map gracefully if table not yet created
-        return res.status(200).json({ success: true, data: {}, serverTime: new Date().toISOString() });
+        return res.status(200).json({ success: true, businessId, data: {}, serverTime: new Date().toISOString() });
       }
 
       const state: Record<string, any> = {};
       if (Array.isArray(data)) {
         data.forEach((row: any) => {
           if (row && row.key) {
-            state[row.key] = row.value;
+            state[row.key] = row.data !== undefined ? row.data : row.value;
           }
         });
       }
 
       return res.status(200).json({
         success: true,
+        businessId,
         data: state,
         serverTime: new Date().toISOString()
       });
     } catch {
-      return res.status(200).json({ success: true, data: {}, serverTime: new Date().toISOString() });
+      return res.status(200).json({ success: true, businessId, data: {}, serverTime: new Date().toISOString() });
     }
   }
 
-  // POST: Push full state to hotel_store
+  // POST: Push full state to hotel_store for the specified business
   if (req.method === 'POST') {
     try {
-      const payload = req.body || {};
-      const rows = Object.entries(payload).map(([key, value]) => ({
-        key,
-        value,
-        updated_at: new Date().toISOString()
-      }));
+      const payload = req.body?.data || req.body || {};
+      const rows = Object.entries(payload)
+        .filter(([k]) => k !== 'business_id' && k !== 'businessId' && k !== 'data')
+        .map(([key, value]) => ({
+          business_id: businessId,
+          key,
+          data: value,
+          updated_at: new Date().toISOString()
+        }));
 
       if (rows.length > 0) {
-        await supabase.from('hotel_store').upsert(rows, { onConflict: 'key' });
+        await supabase.from('hotel_store').upsert(rows, { onConflict: 'business_id,key' });
       }
 
-      return res.status(200).json({ success: true, serverTime: new Date().toISOString() });
+      return res.status(200).json({ success: true, businessId, serverTime: new Date().toISOString() });
     } catch (err: any) {
-      return res.status(200).json({ success: true, warning: err?.message });
+      return res.status(200).json({ success: true, businessId, warning: err?.message });
     }
   }
 

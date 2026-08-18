@@ -8,6 +8,7 @@ import {
   normalizeSupabaseUrl, 
   validateSupabaseConfig 
 } from './supabase';
+import { getActiveBusinessId, getScopedKey } from './storage';
 
 export interface SupabaseConfig {
   url: string;
@@ -267,11 +268,13 @@ CREATE TABLE IF NOT EXISTS public.stock_movements (
   timestamp TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Store Backup Key-Value Store Table for Seamless Dynamic Sync
+-- Store Multi-Tenant Key-Value Store Table for Seamless Dynamic Sync
 CREATE TABLE IF NOT EXISTS public.hotel_store (
-  key TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL REFERENCES public.businesses(id) ON DELETE CASCADE,
+  key TEXT NOT NULL,
   data JSONB NOT NULL,
-  updated_at TIMESTAMPTZ DEFAULT NOW()
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (business_id, key)
 );
 
 -- Enable Row Level Security (RLS) across all tables
@@ -286,47 +289,37 @@ ALTER TABLE public.stock_movements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.hotel_store ENABLE ROW LEVEL SECURITY;
 
 -- Note on RLS Security Architecture:
--- For production isolation, policy conditions can be scoped by business_id or authenticated user tokens.
-DROP POLICY IF EXISTS "Business isolation policy for ingredients" ON public.ingredients;
-CREATE POLICY "Business isolation policy for ingredients" ON public.ingredients FOR ALL USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Business isolation policy for recipes" ON public.recipes;
-CREATE POLICY "Business isolation policy for recipes" ON public.recipes FOR ALL USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Business isolation policy for menu_items" ON public.menu_items;
-CREATE POLICY "Business isolation policy for menu_items" ON public.menu_items FOR ALL USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Business isolation policy for categories" ON public.categories;
-CREATE POLICY "Business isolation policy for categories" ON public.categories FOR ALL USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Business isolation policy for inventory_items" ON public.inventory_items;
-CREATE POLICY "Business isolation policy for inventory_items" ON public.inventory_items FOR ALL USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Business isolation policy for stock_movements" ON public.stock_movements;
-CREATE POLICY "Business isolation policy for stock_movements" ON public.stock_movements FOR ALL USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Allow public access" ON public.hotel_store;
-CREATE POLICY "Allow public access" ON public.hotel_store FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Tenant isolation for hotel_store" ON public.hotel_store;
+CREATE POLICY "Tenant isolation for hotel_store" ON public.hotel_store FOR ALL TO authenticated
+USING (business_id = public.get_auth_business_id() OR public.is_super_admin())
+WITH CHECK (business_id = public.get_auth_business_id() OR public.is_super_admin());
 `.trim();
 
 /**
- * Push all local entity state to Supabase
+ * Push all local entity state to Supabase with tenant scoping
  */
-export async function pushAllToSupabase(): Promise<{ success: boolean; message: string }> {
+export async function pushAllToSupabase(targetBusinessId?: string): Promise<{ success: boolean; message: string }> {
   const client = getSupabaseClient();
   if (!client) {
     return { success: false, message: 'Supabase client is not configured or disabled.' };
   }
 
-  try {
-    const rowsToUpsert: { key: string; data: any; updated_at: string }[] = [];
+  const activeBizId = targetBusinessId || getActiveBusinessId();
+  if (!activeBizId) {
+    return { success: false, message: 'No active business context for tenant synchronization.' };
+  }
 
-    Object.entries(LOCAL_KEY_MAP).forEach(([serverKey, localKey]) => {
-      const raw = localStorage.getItem(localKey);
+  try {
+    const rowsToUpsert: { business_id: string; key: string; data: any; updated_at: string }[] = [];
+
+    Object.entries(LOCAL_KEY_MAP).forEach(([serverKey, baseLocalKey]) => {
+      const scopedKey = getScopedKey(baseLocalKey, activeBizId);
+      const raw = localStorage.getItem(scopedKey) || localStorage.getItem(baseLocalKey);
       if (raw) {
         try {
           const parsed = JSON.parse(raw);
           rowsToUpsert.push({
+            business_id: activeBizId,
             key: serverKey,
             data: parsed,
             updated_at: new Date().toISOString()
@@ -341,13 +334,13 @@ export async function pushAllToSupabase(): Promise<{ success: boolean; message: 
       return { success: true, message: 'No local data to push.' };
     }
 
-    const { error } = await client.from('hotel_store').upsert(rowsToUpsert, { onConflict: 'key' });
+    const { error } = await client.from('hotel_store').upsert(rowsToUpsert, { onConflict: 'business_id,key' });
 
     if (error) {
       throw error;
     }
 
-    return { success: true, message: 'All local data successfully synchronized to Supabase Cloud!' };
+    return { success: true, message: 'All local data successfully synchronized to Supabase Cloud for active business!' };
   } catch (err: any) {
     console.warn('[Supabase Sync]', { operation: 'push', table: 'hotel_store', error: err?.message || err });
     return { success: false, message: err?.message || 'Error pushing to Supabase.' };
@@ -355,16 +348,24 @@ export async function pushAllToSupabase(): Promise<{ success: boolean; message: 
 }
 
 /**
- * Pull all cloud state from Supabase into local storage
+ * Pull all cloud state from Supabase into local storage for the active business
  */
-export async function pullAllFromSupabase(): Promise<{ success: boolean; count: number; message: string }> {
+export async function pullAllFromSupabase(targetBusinessId?: string): Promise<{ success: boolean; count: number; message: string }> {
   const client = getSupabaseClient();
   if (!client) {
     return { success: false, count: 0, message: 'Supabase client is not configured.' };
   }
 
+  const activeBizId = targetBusinessId || getActiveBusinessId();
+  if (!activeBizId) {
+    return { success: false, count: 0, message: 'No active business context for tenant synchronization.' };
+  }
+
   try {
-    const { data, error } = await client.from('hotel_store').select('*');
+    const { data, error } = await client
+      .from('hotel_store')
+      .select('*')
+      .eq('business_id', activeBizId);
 
     if (error) {
       console.warn('[Supabase Sync]', { operation: 'pull', table: 'hotel_store', error: error.message || error });
@@ -372,14 +373,15 @@ export async function pullAllFromSupabase(): Promise<{ success: boolean; count: 
     }
 
     if (!data || data.length === 0) {
-      return { success: true, count: 0, message: 'Supabase cloud store is empty.' };
+      return { success: true, count: 0, message: 'Supabase cloud store is empty for this business.' };
     }
 
     let updatedCount = 0;
-    data.forEach((row: { key: string; data: any }) => {
-      const localKey = LOCAL_KEY_MAP[row.key];
-      if (localKey && row.data !== undefined) {
-        const rawLocal = localStorage.getItem(localKey);
+    data.forEach((row: { business_id: string; key: string; data: any }) => {
+      const baseLocalKey = LOCAL_KEY_MAP[row.key];
+      if (baseLocalKey && row.data !== undefined) {
+        const scopedKey = getScopedKey(baseLocalKey, activeBizId);
+        const rawLocal = localStorage.getItem(scopedKey) || localStorage.getItem(baseLocalKey);
         let localData: any = null;
         try {
           if (rawLocal) localData = JSON.parse(rawLocal);
@@ -397,7 +399,8 @@ export async function pullAllFromSupabase(): Promise<{ success: boolean; count: 
           const currentStr = JSON.stringify(currentLocalArray);
 
           if (mergedStr !== currentStr && merged.length > 0) {
-            localStorage.setItem(localKey, mergedStr);
+            localStorage.setItem(scopedKey, mergedStr);
+            localStorage.setItem(baseLocalKey, mergedStr);
             updatedCount++;
           }
 
@@ -405,16 +408,18 @@ export async function pullAllFromSupabase(): Promise<{ success: boolean; count: 
           if (merged.length > row.data.length) {
             Promise.resolve(
               client.from('hotel_store').upsert([{
+                business_id: activeBizId,
                 key: row.key,
                 data: merged,
                 updated_at: new Date().toISOString()
-              }], { onConflict: 'key' })
+              }], { onConflict: 'business_id,key' })
             ).catch(() => {});
           }
         } else {
           const incomingStr = JSON.stringify(row.data);
           if (incomingStr !== rawLocal && incomingStr !== '[]' && incomingStr !== 'null') {
-            localStorage.setItem(localKey, incomingStr);
+            localStorage.setItem(scopedKey, incomingStr);
+            localStorage.setItem(baseLocalKey, incomingStr);
             updatedCount++;
           }
         }

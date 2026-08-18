@@ -882,7 +882,7 @@ export const DailyReportView: React.FC<DailyReportViewProps> = ({
                         if (!searchQuery) return true;
                         const q = searchQuery.toLowerCase();
                         return (
-                          (o.orderNumber || o.id).toLowerCase().includes(q) ||
+                          (o.orderNumber || o.id || '').toLowerCase().includes(q) ||
                           (o.customerName || '').toLowerCase().includes(q) ||
                           (o.waiterName || '').toLowerCase().includes(q) ||
                           (o.cashierName || '').toLowerCase().includes(q)

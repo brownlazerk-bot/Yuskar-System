@@ -1,16 +1,19 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   KeyRound, ShieldCheck, Clock, Building2, CheckCircle2, 
   AlertTriangle, PhoneCall, Sparkles, Lock, LogOut, ArrowRight,
   RefreshCw, Check, Zap, Smartphone, ExternalLink, HelpCircle,
-  Copy, ShieldAlert
+  Copy, ShieldAlert, Landmark
 } from 'lucide-react';
-import { Business, Subscription, AppUser, SubscriptionPlanDuration } from '../types';
+import { Business, Subscription, AppUser, SubscriptionPlanDuration, PlatformPaymentSettings } from '../types';
 import { 
   SUBSCRIPTION_PLANS, activateBusinessWithLicense, 
   SubscriptionPlanConfig 
 } from '../lib/license';
-import { loadCurrentBusiness, saveCurrentBusiness, loadSubscriptions, saveSubscriptions } from '../lib/storage';
+import { 
+  loadCurrentBusiness, saveCurrentBusiness, loadSubscriptions, saveSubscriptions,
+  loadPlatformPaymentSettings, apiSuperAdminGetPaymentSettings 
+} from '../lib/storage';
 
 interface SubscriptionPaymentGateProps {
   currentUser: AppUser;
@@ -31,6 +34,7 @@ export const SubscriptionPaymentGate: React.FC<SubscriptionPaymentGateProps> = (
     return currentBusiness || loadCurrentBusiness();
   });
 
+  const [paymentSettings, setPaymentSettings] = useState<PlatformPaymentSettings>(() => loadPlatformPaymentSettings());
   const [activeTab, setActiveTab] = useState<'license' | 'pricing' | 'superadmin'>('license');
   const [licenseInput, setLicenseInput] = useState('');
   const [isActivating, setIsActivating] = useState(false);
@@ -43,7 +47,25 @@ export const SubscriptionPaymentGate: React.FC<SubscriptionPaymentGateProps> = (
   const [bypassDays, setBypassDays] = useState(30);
   const [isSubmittingBypass, setIsSubmittingBypass] = useState(false);
   const [bypassError, setBypassError] = useState('');
-  const [copiedMoMo, setCopiedMoMo] = useState(false);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Refresh dynamic payment settings from server if available
+    apiSuperAdminGetPaymentSettings()
+      .then(res => {
+        if (res.success && res.settings) {
+          setPaymentSettings(res.settings);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleCopy = (text: string, key: string) => {
+    if (!text) return;
+    navigator.clipboard?.writeText(text);
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey(null), 2500);
+  };
 
   // Format license input with dashes (e.g. YUSK-XXXX-XXXX)
   const handleLicenseInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -139,12 +161,6 @@ export const SubscriptionPaymentGate: React.FC<SubscriptionPaymentGateProps> = (
     } finally {
       setIsSubmittingBypass(false);
     }
-  };
-
-  const handleCopyMoMo = () => {
-    navigator.clipboard.writeText('0726134041');
-    setCopiedMoMo(true);
-    setTimeout(() => setCopiedMoMo(false), 2500);
   };
 
   const plansList = Object.values(SUBSCRIPTION_PLANS);
@@ -346,76 +362,126 @@ export const SubscriptionPaymentGate: React.FC<SubscriptionPaymentGateProps> = (
               </div>
             </div>
 
-            {/* Right Card: How to get code / MoMo Contact */}
-            <div className="md:col-span-5 bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 flex flex-col justify-between shadow-2xl backdrop-blur-xl">
-              <div className="space-y-6">
+            {/* Right Card: How to get code / MoMo & Bank Transfer Details */}
+            <div className="md:col-span-5 bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 flex flex-col justify-between shadow-2xl backdrop-blur-xl space-y-6">
+              <div className="space-y-5">
                 <div>
                   <span className="text-[10px] font-black uppercase tracking-wider text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-full border border-amber-500/20">
-                    Need a License Code?
+                    Official Payment Channels
                   </span>
-                  <h3 className="text-base font-bold text-white mt-2">Instant License Issuance via MTN MoMo</h3>
+                  <h3 className="text-base font-bold text-white mt-2">Pay via MTN MoMo or Direct Bank Transfer</h3>
                   <p className="text-xs text-slate-400 mt-1">
-                    Pay via MTN Mobile Money to receive your single-use cryptographic license code.
+                    Send your subscription payment to either of the official accounts below to receive your instant activation license.
                   </p>
                 </div>
 
-                {/* MoMo Number Box */}
+                {/* Option 1: MTN MoMo Box */}
                 <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-2">
                   <div className="flex items-center justify-between text-xs text-amber-300 font-semibold">
                     <span className="flex items-center gap-1.5">
                       <Smartphone className="w-3.5 h-3.5" />
-                      MTN MoMo Recipient (Rwanda)
+                      MTN Mobile Money (Rwanda)
                     </span>
                     <button
-                      onClick={handleCopyMoMo}
-                      className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 flex items-center gap-1"
+                      type="button"
+                      onClick={() => handleCopy(paymentSettings.momoNumber, 'gate-momo')}
+                      className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 flex items-center gap-1 cursor-pointer"
                     >
-                      {copiedMoMo ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                      <span>{copiedMoMo ? 'Copied' : 'Copy'}</span>
+                      {copiedKey === 'gate-momo' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedKey === 'gate-momo' ? 'Copied' : 'Copy'}</span>
                     </button>
                   </div>
                   <div className="flex items-baseline justify-between">
-                    <span className="text-2xl font-mono font-black text-white tracking-wider">0726134041</span>
+                    <span className="text-xl font-mono font-black text-white tracking-wider">
+                      {paymentSettings.momoNumber || '0726134041'}
+                    </span>
                     <span className="text-xs font-bold bg-amber-500 text-slate-950 px-2 py-0.5 rounded">MTN RW</span>
                   </div>
-                  <p className="text-[11px] text-slate-400">
-                    Account Name: <strong>Smart Hospitality Cloud / YusKar</strong>
-                  </p>
+                  <div className="text-[11px] text-slate-300 flex justify-between">
+                    <span>Account Name:</span>
+                    <strong className="text-white">{paymentSettings.momoAccountName || 'Theogene / YusKar Empire'}</strong>
+                  </div>
+                  {paymentSettings.momoUssdCode && (
+                    <div className="text-[10px] text-slate-400 flex items-center justify-between bg-slate-950/40 p-1.5 rounded-lg">
+                      <span>Dial: <strong className="font-mono text-slate-200">{paymentSettings.momoUssdCode}</strong></span>
+                      <button
+                        type="button"
+                        onClick={() => handleCopy(paymentSettings.momoUssdCode || '', 'gate-ussd')}
+                        className="text-[10px] text-amber-400 hover:underline"
+                      >
+                        {copiedKey === 'gate-ussd' ? 'Copied' : 'Copy'}
+                      </button>
+                    </div>
+                  )}
                 </div>
 
-                {/* Instructions */}
+                {/* Option 2: Bank Account Box */}
+                <div className="p-4 rounded-2xl bg-blue-500/10 border border-blue-500/30 space-y-2">
+                  <div className="flex items-center justify-between text-xs text-blue-300 font-semibold">
+                    <span className="flex items-center gap-1.5">
+                      <Landmark className="w-3.5 h-3.5" />
+                      {paymentSettings.primaryBankName || 'Bank of Kigali (BK)'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleCopy(paymentSettings.primaryBankAccount, 'gate-bank')}
+                      className="text-[10px] px-2 py-0.5 rounded bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 flex items-center gap-1 cursor-pointer"
+                    >
+                      {copiedKey === 'gate-bank' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedKey === 'gate-bank' ? 'Copied' : 'Copy'}</span>
+                    </button>
+                  </div>
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-sm font-mono font-black text-amber-300 tracking-wider">
+                      {paymentSettings.primaryBankAccount || '00040-0694038-34'}
+                    </span>
+                    <span className="text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/40 px-2 py-0.5 rounded">BANK</span>
+                  </div>
+                  <div className="text-[11px] text-slate-300 flex justify-between">
+                    <span>Account Name:</span>
+                    <strong className="text-white">{paymentSettings.primaryAccountName || 'YUSKAR EMPIRE LTD'}</strong>
+                  </div>
+                  {paymentSettings.primaryBranch && (
+                    <div className="text-[10px] text-slate-400 flex justify-between">
+                      <span>Branch / Swift:</span>
+                      <span className="text-slate-300">{paymentSettings.primaryBranch} {paymentSettings.primarySwiftCode ? `(${paymentSettings.primarySwiftCode})` : ''}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Step Instructions */}
                 <div className="space-y-2 text-xs text-slate-300">
                   <div className="flex items-start gap-2">
                     <div className="w-5 h-5 rounded-full bg-slate-800 text-amber-400 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">
                       1
                     </div>
-                    <span>Send the subscription amount for your selected plan to <strong>0726134041</strong>.</span>
+                    <span>Transfer your fee via MTN MoMo (<strong>{paymentSettings.momoNumber}</strong>) or Bank (<strong>{paymentSettings.primaryBankName}</strong>).</span>
                   </div>
                   <div className="flex items-start gap-2">
                     <div className="w-5 h-5 rounded-full bg-slate-800 text-amber-400 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">
                       2
                     </div>
-                    <span>Contact Super Admin on WhatsApp with your payment SMS reference and business name.</span>
+                    <span>Send payment reference or deposit slip with your business name to support.</span>
                   </div>
                   <div className="flex items-start gap-2">
                     <div className="w-5 h-5 rounded-full bg-slate-800 text-amber-400 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">
                       3
                     </div>
-                    <span>Enter the delivered license code on this screen to instantly unlock all terminals.</span>
+                    <span>Enter the delivered license code on the left to instantly unlock all terminals.</span>
                   </div>
                 </div>
               </div>
 
               {/* WhatsApp Support Button */}
-              <div className="mt-6 pt-5 border-t border-slate-800">
+              <div className="pt-4 border-t border-slate-800">
                 <a
-                  href="https://wa.me/250726134041?text=Hello%20Super%20Admin,%20I%20want%20to%20activate%20my%20business%20subscription%20for%20"
+                  href={`https://wa.me/${(paymentSettings.supportPhone || '250726134041').replace(/[^0-9]/g, '')}?text=${encodeURIComponent(`Hello Super Admin, I want to activate subscription for business ${business?.name || ''}`)}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="w-full py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition"
+                  className="w-full py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition cursor-pointer"
                 >
                   <PhoneCall className="w-4 h-4" />
-                  <span>Contact Super Admin on WhatsApp (+250 726 134 041)</span>
+                  <span>Contact Super Admin on WhatsApp ({paymentSettings.supportPhone || '+250 726 134 041'})</span>
                 </a>
               </div>
             </div>
@@ -495,21 +561,32 @@ export const SubscriptionPaymentGate: React.FC<SubscriptionPaymentGateProps> = (
               ))}
             </div>
 
-            {/* Official MoMo Info Banner */}
+            {/* Official Payment Info Banner */}
             <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
               <div>
-                <h4 className="text-sm font-bold text-white">Payment via MTN Mobile Money (Rwanda)</h4>
+                <h4 className="text-sm font-bold text-white">Payment via MTN Mobile Money & Bank Transfer</h4>
                 <p className="text-xs text-slate-400 mt-1">
-                  Send subscription amount to Merchant Number <strong>0726134041</strong> and request your license key.
+                  MoMo: <strong className="text-amber-400">{paymentSettings.momoNumber || '0726134041'}</strong> | Bank: <strong className="text-blue-400">{paymentSettings.primaryBankName || 'Bank of Kigali'}</strong> ({paymentSettings.primaryBankAccount || '00040-0694038-34'})
                 </p>
               </div>
-              <button
-                onClick={handleCopyMoMo}
-                className="px-4 py-2 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs flex items-center gap-2 shrink-0"
-              >
-                <Copy className="w-3.5 h-3.5" />
-                <span>{copiedMoMo ? 'Copied Number!' : 'Copy 0726134041'}</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleCopy(paymentSettings.momoNumber, 'price-momo')}
+                  className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 shrink-0 cursor-pointer transition"
+                >
+                  {copiedKey === 'price-momo' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedKey === 'price-momo' ? 'Copied MoMo!' : 'Copy MoMo'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleCopy(paymentSettings.primaryBankAccount, 'price-bank')}
+                  className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center gap-1.5 shrink-0 cursor-pointer transition"
+                >
+                  {copiedKey === 'price-bank' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedKey === 'price-bank' ? 'Copied Bank!' : 'Copy Bank'}</span>
+                </button>
+              </div>
             </div>
           </div>
         )}

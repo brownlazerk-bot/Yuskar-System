@@ -285,8 +285,9 @@ export const MenuModule: React.FC<MenuModuleProps> = ({
 
   // Filter Menu Items
   const filteredMenuItems = menuItems.filter(m => {
-    const matchesSearch = m.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      m.category.toLowerCase().includes(searchTerm.toLowerCase());
+    const q = (searchTerm || '').toLowerCase();
+    const matchesSearch = (m.name || '').toLowerCase().includes(q) ||
+      (m.category || '').toLowerCase().includes(q);
     
     const matchesCategory = selectedCategory === 'All' || m.category === selectedCategory;
     const matchesStatus = selectedStatus === 'All' || m.status === selectedStatus;

@@ -457,7 +457,7 @@ export default function App() {
           if (recItem.active === false) return; // Skip inactive recipe items
 
           const ingIndex = currentIngs.findIndex(
-            g => g.id === recItem.ingredientId || g.name.toLowerCase() === recItem.ingredientName.toLowerCase()
+            g => g.id === recItem.ingredientId || (g.name && recItem.ingredientName && g.name.toLowerCase() === recItem.ingredientName.toLowerCase())
           );
           if (ingIndex > -1) {
             hasChanges = true;
@@ -712,7 +712,7 @@ export default function App() {
             const drinkQtyToRestore = (drink.quantity || 1) * item.quantity;
             const drinkIndex = updatedMenuItems.findIndex(m => 
               (drink.menuItemId && m.id === drink.menuItemId) ||
-              m.name.toLowerCase() === drink.drinkName.toLowerCase()
+              (m.name && drink.drinkName && m.name.toLowerCase() === drink.drinkName.toLowerCase())
             );
             if (drinkIndex > -1) {
               const dMenuItem = updatedMenuItems[drinkIndex];
@@ -1470,8 +1470,8 @@ export default function App() {
         // Check if item matches a Kitchen Raw Ingredient
         const ingIdx = updatedIngredients.findIndex(g => 
           g.id === poItem.itemId || 
-          g.name.toLowerCase() === poItem.itemName.toLowerCase() ||
-          poItem.itemId.startsWith('ing-')
+          (g.name && poItem.itemName && g.name.toLowerCase() === poItem.itemName.toLowerCase()) ||
+          (poItem.itemId && poItem.itemId.startsWith('ing-'))
         );
 
         if (ingIdx > -1) {
@@ -1522,7 +1522,7 @@ export default function App() {
           // Check if item matches a Menu Item (Beverage or Dish)
           const menuIdx = updatedMenuItems.findIndex(m => 
             m.id === poItem.itemId || 
-            m.name.toLowerCase() === poItem.itemName.toLowerCase()
+            (m.name && poItem.itemName && m.name.toLowerCase() === poItem.itemName.toLowerCase())
           );
 
           if (menuIdx > -1) {
@@ -1715,8 +1715,8 @@ export default function App() {
         // Reverse Kitchen Raw Ingredient stock if applicable
         const ingIdx = updatedIngredients.findIndex(g => 
           g.id === poItem.itemId || 
-          g.name.toLowerCase() === poItem.itemName.toLowerCase() ||
-          poItem.itemId.startsWith('ing-')
+          (g.name && poItem.itemName && g.name.toLowerCase() === poItem.itemName.toLowerCase()) ||
+          (poItem.itemId && poItem.itemId.startsWith('ing-'))
         );
 
         if (ingIdx > -1) {
@@ -1766,7 +1766,7 @@ export default function App() {
           // Check if item matches a Menu Item (Beverage or Dish)
           const menuIdx = updatedMenuItems.findIndex(m => 
             m.id === poItem.itemId || 
-            m.name.toLowerCase() === poItem.itemName.toLowerCase()
+            (m.name && poItem.itemName && m.name.toLowerCase() === poItem.itemName.toLowerCase())
           );
 
           if (menuIdx > -1) {

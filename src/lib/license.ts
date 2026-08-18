@@ -24,7 +24,7 @@ export interface SubscriptionPlanConfig {
   description: string;
 }
 
-export const SUBSCRIPTION_PLANS: Record<SubscriptionPlanDuration, SubscriptionPlanConfig> = {
+export const DEFAULT_SUBSCRIPTION_PLANS: Record<SubscriptionPlanDuration, SubscriptionPlanConfig> = {
   MONTHLY: {
     id: 'MONTHLY',
     name: 'Monthly License',
@@ -63,10 +63,34 @@ export const SUBSCRIPTION_PLANS: Record<SubscriptionPlanDuration, SubscriptionPl
   }
 };
 
+export const SUBSCRIPTION_PLANS = DEFAULT_SUBSCRIPTION_PLANS;
+
 const STORAGE_KEYS = {
   LICENSES: 'yuskar_subscription_licenses',
-  ACTIVE_LICENSE: 'yuskar_active_license'
+  ACTIVE_LICENSE: 'yuskar_active_license',
+  CUSTOM_PLANS: 'yuskar_subscription_plans_config'
 };
+
+export function loadSubscriptionPlansConfig(): Record<SubscriptionPlanDuration, SubscriptionPlanConfig> {
+  if (typeof window === 'undefined') return DEFAULT_SUBSCRIPTION_PLANS;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.CUSTOM_PLANS);
+    if (!raw) return DEFAULT_SUBSCRIPTION_PLANS;
+    const parsed = JSON.parse(raw);
+    return { ...DEFAULT_SUBSCRIPTION_PLANS, ...parsed };
+  } catch (e) {
+    return DEFAULT_SUBSCRIPTION_PLANS;
+  }
+}
+
+export function saveSubscriptionPlansConfig(plans: Record<SubscriptionPlanDuration, SubscriptionPlanConfig>): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(STORAGE_KEYS.CUSTOM_PLANS, JSON.stringify(plans));
+  } catch (e) {
+    console.error('Failed to save custom subscription plans:', e);
+  }
+}
 
 // ==============================================================================
 // 2. CRYPTOGRAPHIC UTILITIES (SHA-256 HASHING & CODE GENERATION)

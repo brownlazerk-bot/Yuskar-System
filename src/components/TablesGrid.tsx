@@ -117,7 +117,7 @@ export const TablesGrid: React.FC<TablesGridProps> = ({
 
     // Check duplicate Table Number
     const isDuplicateNumber = tables.some(
-      t => t.id !== editingTable.id && t.tableNumber.toLowerCase() === trimmedNumber.toLowerCase()
+      t => t.id !== editingTable.id && (t.tableNumber || '').toLowerCase() === (trimmedNumber || '').toLowerCase()
     );
     if (isDuplicateNumber) {
       setFormError(`Table Number "${trimmedNumber}" is already in use by another table.`);
@@ -126,7 +126,7 @@ export const TablesGrid: React.FC<TablesGridProps> = ({
 
     // Check duplicate Table Tag
     const isDuplicateTag = tables.some(
-      t => t.id !== editingTable.id && t.tableTag?.toLowerCase() === trimmedTag.toLowerCase()
+      t => t.id !== editingTable.id && (t.tableTag || '').toLowerCase() === (trimmedTag || '').toLowerCase()
     );
     if (isDuplicateTag) {
       setFormError(`Table Tag "${trimmedTag}" is already assigned to another table.`);
@@ -219,9 +219,9 @@ export const TablesGrid: React.FC<TablesGridProps> = ({
   );
 
   const filteredTables = tables.filter(t => {
-    const q = searchQuery.toLowerCase().trim();
+    const q = (searchQuery || '').toLowerCase().trim();
     const matchesSearch = !q || 
-      t.tableNumber.toLowerCase().includes(q) ||
+      (t.tableNumber || '').toLowerCase().includes(q) ||
       (t.tableName && t.tableName.toLowerCase().includes(q)) ||
       (t.tableTag && t.tableTag.toLowerCase().includes(q)) ||
       (t.location && t.location.toLowerCase().includes(q)) ||

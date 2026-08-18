@@ -6,7 +6,8 @@ import {
   WhatsAppSettings, WhatsAppRecipient, ReportDeliveryRule, ReportDeliveryHistory,
   MessageTemplate, NotificationItem, NotificationRule, ApprovalRule, ApprovalRequest,
   Employee, SalaryAdvance, PayrollRecord, AttendanceRecord,
-  Business, Subscription, SubscriptionPayment, SubscriptionOverrideRecord, MomoApiConfig
+  Business, Subscription, SubscriptionPayment, SubscriptionOverrideRecord, MomoApiConfig,
+  PlatformPaymentSettings
 } from '../types';
 import { 
   INITIAL_MENU_ITEMS, INITIAL_TABLES, INITIAL_WAITERS, 
@@ -72,7 +73,8 @@ const KEYS = {
   SUBSCRIPTION_PAYMENTS: 'hotel_subscription_payments_prod',
   SUBSCRIPTION_OVERRIDES: 'hotel_subscription_overrides_prod',
   CURRENT_BUSINESS: 'hotel_current_business_prod',
-  MOMO_CONFIG: 'hotel_momo_config_prod'
+  MOMO_CONFIG: 'hotel_momo_config_prod',
+  PLATFORM_PAYMENT_SETTINGS: 'hotel_platform_payment_settings_prod'
 };
 
 // Ensure legacy sample keys are cleared without erasing current production keys
@@ -100,11 +102,56 @@ function initializeCleanSlateIfNeeded() {
 
 initializeCleanSlateIfNeeded();
 
-// Safe JSON parse
+export function getActiveBusinessId(): string {
+  try {
+    const rawUser = localStorage.getItem(KEYS.CURRENT_USER);
+    if (rawUser) {
+      const u = JSON.parse(rawUser);
+      if (u && u.businessId) return u.businessId;
+    }
+    const rawBiz = localStorage.getItem(KEYS.CURRENT_BUSINESS);
+    if (rawBiz) {
+      const b = JSON.parse(rawBiz);
+      if (b && b.id) return b.id;
+    }
+  } catch {}
+  return 'biz-1786805821046'; // fallback to existing live business ID
+}
+
+const GLOBAL_KEYS = new Set([
+  KEYS.PROD_INIT,
+  KEYS.CURRENT_USER,
+  KEYS.CURRENT_BUSINESS,
+  KEYS.BUSINESSES,
+  KEYS.SUBSCRIPTIONS,
+  KEYS.SUBSCRIPTION_PAYMENTS,
+  KEYS.SUBSCRIPTION_OVERRIDES,
+  KEYS.MOMO_CONFIG,
+  KEYS.PLATFORM_PAYMENT_SETTINGS
+]);
+
+export function getScopedKey(baseKey: string, businessId?: string): string {
+  if (GLOBAL_KEYS.has(baseKey)) {
+    return baseKey;
+  }
+  const bizId = businessId || getActiveBusinessId();
+  return `hotel_${bizId}_${baseKey.replace(/^hotel_/, '')}`;
+}
+
+// Safe JSON parse with tenant scoping and backward-compatibility fallback
 function getStorage<T>(key: string, defaultValue: T): T {
   try {
-    const data = localStorage.getItem(key);
-    return data ? JSON.parse(data) : defaultValue;
+    const scopedKey = getScopedKey(key);
+    const scopedData = localStorage.getItem(scopedKey);
+    if (scopedData !== null) {
+      return JSON.parse(scopedData);
+    }
+    // Backward compatibility fallback for existing records
+    const legacyData = localStorage.getItem(key);
+    if (legacyData !== null) {
+      return JSON.parse(legacyData);
+    }
+    return defaultValue;
   } catch (err) {
     console.error(`Error reading ${key} from storage:`, err);
     return defaultValue;
@@ -151,8 +198,16 @@ const LOCAL_TO_SERVER_KEY: Record<string, string> = {
 
 function setStorage<T>(key: string, value: T): void {
   try {
-    localStorage.setItem(key, JSON.stringify(value));
+    const scopedKey = getScopedKey(key);
+    localStorage.setItem(scopedKey, JSON.stringify(value));
+    
+    // Also keep base key updated if on the primary active business
+    if (!GLOBAL_KEYS.has(key)) {
+      localStorage.setItem(key, JSON.stringify(value));
+    }
+
     notifyDataChange(key);
+    notifyDataChange(scopedKey);
     
     // Asynchronously push to central Express backend server for cross-device sync (HP, Dell, Phone)
     const serverKey = LOCAL_TO_SERVER_KEY[key];
@@ -160,15 +215,17 @@ function setStorage<T>(key: string, value: T): void {
       recordLocalWrite(serverKey);
       pushKeyToServer(serverKey, value);
 
-      // Also auto-push to Supabase Cloud if configured
+      // Also auto-push to Supabase Cloud if configured with active business context
       const client = getSupabaseClient();
-      if (client) {
+      const activeBizId = getActiveBusinessId();
+      if (client && activeBizId) {
         Promise.resolve(
           client.from('hotel_store').upsert([{
+            business_id: activeBizId,
             key: serverKey,
             data: value,
             updated_at: new Date().toISOString()
-          }], { onConflict: 'key' })
+          }], { onConflict: 'business_id,key' })
         ).catch(() => {});
       }
     }
@@ -207,7 +264,7 @@ export function loadWaiters(): Waiter[] {
 
   waiterUsers.forEach(u => {
     const existingIndex = combined.findIndex(
-      w => w.id === u.id || w.name.toLowerCase() === u.fullName.toLowerCase()
+      w => w.id === u.id || (w.name && u.fullName && w.name.toLowerCase() === u.fullName.toLowerCase())
     );
     if (existingIndex === -1) {
       combined.push({
@@ -829,6 +886,59 @@ export function resetAllDataToDefault(initiatingUser?: AppUser | null): boolean 
 // SAAS SUBSCRIPTION & MTN MOMO CLIENT HELPERS
 // ==========================================
 
+export const INITIAL_PLATFORM_PAYMENT_SETTINGS: PlatformPaymentSettings = {
+  // Mobile Money
+  enableMomo: true,
+  momoNumber: '0726134041',
+  momoAccountName: 'Theogene / YusKar Empire',
+  momoMerchantCode: '0726134041',
+  momoUssdCode: '*182*8*1*0726134041#',
+  enableAirtel: true,
+  airtelMoneyNumber: '+250 730 000 000',
+  airtelAccountName: 'YusKar Empire',
+
+  // Bank Accounts
+  enableBankTransfer: true,
+  primaryBankName: 'Bank of Kigali (BK)',
+  primaryBankAccount: '00040-0694038-34',
+  primaryAccountName: 'YUSKAR EMPIRE LTD',
+  primaryBranch: 'Kigali Head Office',
+  primarySwiftCode: 'BKRWRWRW',
+  secondaryBankName: 'Equity Bank Rwanda',
+  secondaryBankAccount: '4001211234567',
+  secondaryAccountName: 'YUSKAR EMPIRE LTD',
+
+  // Card & Online Gateway
+  enableCardPayment: true,
+  cardGatewayName: 'Visa, Mastercard & Online Card Terminal',
+  cardPaymentLink: 'https://pay.yuskar.rw/checkout',
+  cardInstructions: 'Instant card payment via Visa, Mastercard, or UnionPay with instant automated system activation.',
+
+  // Bonus Activation
+  defaultBonusDays: 14,
+  enableAutoBonusOnRegister: true,
+
+  // General Support
+  supportPhone: '+250 726 134 041',
+  supportEmail: 'yuskarshop@gmail.com',
+  paymentInstructions: 'Please make payment using MTN Mobile Money, Airtel Money, Bank Transfer, or Credit/Debit Card to the official platform accounts. Enter your Business Name/Code as payment reference.',
+  monthlyFee: 100000,
+  currency: 'RWF',
+  updatedAt: '2026-08-18T10:00:00.000Z'
+};
+
+export function loadPlatformPaymentSettings(): PlatformPaymentSettings {
+  return getStorage<PlatformPaymentSettings>(KEYS.PLATFORM_PAYMENT_SETTINGS, INITIAL_PLATFORM_PAYMENT_SETTINGS);
+}
+
+export function savePlatformPaymentSettings(settings: PlatformPaymentSettings): void {
+  const updated = {
+    ...settings,
+    updatedAt: new Date().toISOString()
+  };
+  setStorage(KEYS.PLATFORM_PAYMENT_SETTINGS, updated);
+}
+
 export const SAAS_MONTHLY_FEE = 100000; // 100,000 RWF
 export const SAAS_MOMO_MERCHANT_NUMBER = '0726134041'; // Official fixed MTN MoMo recipient
 
@@ -929,6 +1039,114 @@ export function loadSubscriptionOverrides(): SubscriptionOverrideRecord[] {
 
 export function saveSubscriptionOverrides(overrides: SubscriptionOverrideRecord[]): void {
   setStorage(KEYS.SUBSCRIPTION_OVERRIDES, overrides);
+}
+
+/**
+ * Grant Free Bonus Days to a Client / Business
+ * Instantly activates their account with free days to use the system
+ */
+export function grantBusinessBonusDays(
+  businessId: string,
+  days: number,
+  reason: string = 'Complimentary Promotion / Free Bonus Days',
+  adminUser?: AppUser
+): { success: boolean; business?: Business; subscription?: Subscription; error?: string } {
+  const businesses = loadBusinesses();
+  const subscriptions = loadSubscriptions();
+  
+  const bizIndex = businesses.findIndex(b => b.id === businessId);
+  if (bizIndex === -1) {
+    return { success: false, error: 'Business not found' };
+  }
+
+  const biz = businesses[bizIndex];
+  const subIndex = subscriptions.findIndex(s => s.businessId === businessId);
+  const sub = subIndex > -1 ? subscriptions[subIndex] : null;
+
+  const now = new Date();
+  let baseExpiry = now.getTime();
+  if (sub && sub.expiryDate) {
+    const existingExp = new Date(sub.expiryDate).getTime();
+    if (existingExp > now.getTime()) {
+      baseExpiry = existingExp;
+    }
+  }
+
+  const newExpiryTime = baseExpiry + (days * 24 * 60 * 60 * 1000);
+  const newExpiryDate = new Date(newExpiryTime).toISOString();
+
+  const updatedBiz: Business = {
+    ...biz,
+    status: 'ACTIVE',
+    bonusDays: (biz.bonusDays || 0) + days,
+    updatedAt: now.toISOString()
+  };
+  businesses[bizIndex] = updatedBiz;
+  saveBusinesses(businesses);
+
+  const updatedSub: Subscription = {
+    ...(sub || {
+      id: `SUB-${Date.now()}`,
+      businessId: biz.id,
+      businessName: biz.name,
+      amount: 100000,
+      monthlyFee: 100000,
+      currency: 'RWF',
+      createdAt: now.toISOString()
+    }),
+    status: 'ACTIVE',
+    startDate: sub?.startDate || now.toISOString(),
+    expiryDate: newExpiryDate,
+    expiresAt: newExpiryDate,
+    bonusDaysGranted: ((sub?.bonusDaysGranted || 0) + days),
+    bonusReason: reason,
+    isBonusActive: true,
+    paymentMethod: sub?.paymentMethod || 'BONUS_GRANT',
+    updatedAt: now.toISOString()
+  };
+
+  if (subIndex > -1) {
+    subscriptions[subIndex] = updatedSub;
+  } else {
+    subscriptions.unshift(updatedSub);
+  }
+  saveSubscriptions(subscriptions);
+
+  // Record override/bonus record
+  const overrides = loadSubscriptionOverrides();
+  const overrideRec: SubscriptionOverrideRecord = {
+    id: `bonus-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
+    businessId: biz.id,
+    businessName: biz.name,
+    grantedByAdmin: adminUser?.fullName || 'Super Admin',
+    adminEmail: adminUser?.email || 'yuskar@gmail.com',
+    reason: `[BONUS DAYS ACTIVATION] ${reason}`,
+    startDate: now.toISOString(),
+    expiryDate: newExpiryDate,
+    daysGranted: days,
+    isBonus: true,
+    timestamp: now.toISOString()
+  };
+  overrides.unshift(overrideRec);
+  saveSubscriptionOverrides(overrides);
+
+  // Add system audit log
+  addAuditLog({
+    userId: adminUser?.id || 'super-admin-01',
+    userName: adminUser?.fullName || 'Super Admin',
+    userRole: 'Super Admin',
+    userEmail: adminUser?.email || 'yuskar@gmail.com',
+    businessId: biz.id,
+    action: 'Grant Bonus Days',
+    category: 'Subscription',
+    details: `Granted ${days} free bonus days to "${biz.name}". Subscription valid until ${new Date(newExpiryTime).toLocaleDateString()}. Note: ${reason}`
+  });
+
+  return {
+    success: true,
+    business: updatedBiz,
+    subscription: updatedSub
+  };
 }
 
 export function evaluateSubscriptionMetrics(sub?: Subscription | null) {
@@ -1080,3 +1298,34 @@ export async function apiSuperAdminSaveMomoConfig(config: any) {
   });
   return await res.json();
 }
+
+export async function apiSuperAdminGetPaymentSettings() {
+  const res = await fetch('/api/subscription/super-admin/payment-accounts');
+  return await res.json();
+}
+
+export async function apiSuperAdminSavePaymentSettings(settings: PlatformPaymentSettings) {
+  const res = await fetch('/api/subscription/super-admin/payment-accounts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings)
+  });
+  return await res.json();
+}
+
+export async function apiSuperAdminGrantBonus(data: {
+  businessId: string;
+  bonusDays: number;
+  reason?: string;
+  adminName?: string;
+  adminEmail?: string;
+}) {
+  const res = await fetch('/api/subscription/super-admin/grant-bonus', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+  return await res.json();
+}
+
+

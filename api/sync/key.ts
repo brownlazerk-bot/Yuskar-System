@@ -42,16 +42,20 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   try {
-    const { key, value } = req.body || {};
+    const { key, value, data, business_id, businessId } = req.body || {};
+    const effectiveBizId = business_id || businessId || 'biz-1786805821046';
+    const payloadData = data !== undefined ? data : value;
+
     if (key) {
       await supabase.from('hotel_store').upsert([{
+        business_id: effectiveBizId,
         key,
-        value,
+        data: payloadData,
         updated_at: new Date().toISOString()
-      }], { onConflict: 'key' });
+      }], { onConflict: 'business_id,key' });
     }
 
-    return res.status(200).json({ success: true, key, serverTime: new Date().toISOString() });
+    return res.status(200).json({ success: true, businessId: effectiveBizId, key, serverTime: new Date().toISOString() });
   } catch (err: any) {
     return res.status(200).json({ success: true, warning: err?.message });
   }

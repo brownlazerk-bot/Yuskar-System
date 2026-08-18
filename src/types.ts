@@ -125,6 +125,7 @@ export interface Business {
   currency: string; // 'RWF'
   status: SaaSSubscriptionStatus;
   subscriptionId?: string;
+  bonusDays?: number;
   createdAt: string;
   updatedAt?: string;
 }
@@ -137,12 +138,12 @@ export interface SubscriptionPaymentRecord {
   paymentDate: string; // ISO
   periodStartDate?: string; // ISO
   periodEndDate?: string; // ISO
-  paymentMethod: 'MTN_MOMO' | 'MANUAL_OVERRIDE' | 'BANK_TRANSFER' | string;
+  paymentMethod: 'MTN_MOMO' | 'MANUAL_OVERRIDE' | 'BANK_TRANSFER' | 'CREDIT_CARD' | 'BONUS_ACTIVATION' | string;
   momoNumber?: string; // '0726134041'
   payerPhone?: string;
   transactionReference: string; // Financial transaction ID / External ID
   status: 'SUCCESS' | 'PENDING' | 'FAILED';
-  verificationSource?: 'MOMO_API_WEBHOOK' | 'MOMO_API_POLL' | 'SUPER_ADMIN_DIRECT_CONFIRM' | 'MOMO_STK_PUSH';
+  verificationSource?: 'MOMO_API_WEBHOOK' | 'MOMO_API_POLL' | 'SUPER_ADMIN_DIRECT_CONFIRM' | 'MOMO_STK_PUSH' | 'BONUS_GRANT';
   verifiedBy?: string;
   verifiedAt?: string;
   notes?: string;
@@ -166,7 +167,7 @@ export interface Subscription {
   gracePeriodDays?: number; // Default 0, configurable by Super Admin
   graceExpiresAt?: string; // ISO string if grace period active
   gracePeriodExpiresAt?: string;
-  paymentMethod?: 'MTN_MOMO' | 'MANUAL_OVERRIDE' | string;
+  paymentMethod?: 'MTN_MOMO' | 'MANUAL_OVERRIDE' | 'BANK_TRANSFER' | 'CREDIT_CARD' | 'BONUS_GRANT' | string;
   momoNumber?: string; // '0726134041'
   lastPaymentDate?: string;
   paymentReference?: string;
@@ -176,6 +177,9 @@ export interface Subscription {
   nextPaymentAmount?: number; // 100000
   paymentHistory?: SubscriptionPaymentRecord[];
   autoRenew?: boolean;
+  bonusDaysGranted?: number;
+  bonusReason?: string;
+  isBonusActive?: boolean;
   notes?: string;
   remindersSent?: {
     sevenDays?: boolean;
@@ -194,7 +198,7 @@ export interface SubscriptionPayment {
   subscriptionId: string;
   amount: number; // 100000
   currency: 'RWF';
-  paymentMethod: 'MTN MoMo (Rwanda)' | 'Super Admin Direct Override' | 'Bank Transfer';
+  paymentMethod: 'MTN MoMo (Rwanda)' | 'Super Admin Direct Override' | 'Bank Transfer' | 'Credit / Debit Card' | 'Bonus Activation' | string;
   payerPhone: string; // e.g. 078XXXXXXX
   recipientPhone: string; // "0726134041"
   paymentReference: string; // Unique reference ID generated for payment
@@ -202,7 +206,7 @@ export interface SubscriptionPayment {
   status: SaaSPaymentStatus;
   failureReason?: string;
   paidAt?: string;
-  verifiedBy: 'MTN MoMo Gateway' | 'Super Admin Master Override' | 'Server Webhook' | 'System Automation';
+  verifiedBy: 'MTN MoMo Gateway' | 'Super Admin Master Override' | 'Server Webhook' | 'System Automation' | 'Super Admin Bonus Grant' | string;
   durationMonths: number; // 1
   createdAt: string;
   rawMomoResponse?: Record<string, any>;
@@ -218,19 +222,65 @@ export interface SubscriptionOverrideRecord {
   startDate: string;
   expiryDate: string;
   daysGranted: number;
+  isBonus?: boolean;
   timestamp: string;
+}
+
+export interface PlatformPaymentSettings {
+  // Mobile Money
+  enableMomo?: boolean;
+  momoNumber: string; // e.g. "0726134041"
+  momoAccountName: string; // e.g. "Theogene / YusKar Empire"
+  momoMerchantCode?: string; // e.g. "0726134041"
+  momoUssdCode?: string; // e.g. "*182*8*1*0726134041#"
+  enableAirtel?: boolean;
+  airtelMoneyNumber?: string; // e.g. "+250 730 000 000"
+  airtelAccountName?: string; // e.g. "YusKar Empire"
+  
+  // Bank Accounts
+  enableBankTransfer?: boolean;
+  primaryBankName: string; // e.g. "Bank of Kigali (BK)"
+  primaryBankAccount: string; // e.g. "00040-0694038-34"
+  primaryAccountName: string; // e.g. "YUSKAR EMPIRE LTD"
+  primaryBranch?: string; // e.g. "Kigali Head Office"
+  primarySwiftCode?: string; // e.g. "BKRWRWRW"
+  secondaryBankName?: string; // e.g. "Equity Bank Rwanda"
+  secondaryBankAccount?: string; // e.g. "4001211234567"
+  secondaryAccountName?: string; // e.g. "YUSKAR EMPIRE LTD"
+  
+  // Card & Online Payment Gateway
+  enableCardPayment?: boolean;
+  cardGatewayName?: string; // e.g. "Visa / Mastercard / Online Card Terminal"
+  cardPaymentLink?: string; // e.g. "https://pay.yuskar.rw/checkout"
+  cardInstructions?: string; // e.g. "Instant card activation via Visa, Mastercard, or UnionPay online."
+
+  // Free Bonus Activation Settings
+  defaultBonusDays?: number; // e.g. 7 or 14 days free bonus
+  enableAutoBonusOnRegister?: boolean; // automatically grant free days on client signup
+
+  // General & Contact
+  supportPhone?: string; // e.g. "+250 726 134 041"
+  supportEmail?: string; // e.g. "yuskarshop@gmail.com"
+  paymentInstructions?: string;
+  monthlyFee?: number;
+  currency?: string;
+  updatedAt?: string;
+  updatedBy?: string;
 }
 
 export interface MomoApiConfig {
   targetEnvironment?: 'sandbox' | 'live' | 'production';
   environment?: 'sandbox' | 'production' | 'live';
-  subscriptionKey: string;
+  primarySubscriptionKey?: string;
+  subscriptionKey?: string;
   apiUser: string;
   apiKey: string;
+  merchantNumber?: string;
   merchantPhone?: string; // "0726134041"
   targetMomoNumber?: string;
-  currency: 'RWF' | string;
-  monthlyFee: number; // 100000
+  currency?: 'RWF' | string;
+  monthlyFee?: number; // 100000
+  subscriptionAmount?: number;
   gracePeriodDays?: number;
   callbackHost?: string;
   enabled?: boolean;
@@ -836,12 +886,13 @@ export type User = AppUser;
 
 export interface AuditLog {
   id: string;
+  businessId?: string;
   userId: string;
   userName: string;
   userRole: string;
   userEmail: string;
   action: string;
-  category: 'Auth' | 'User Management' | 'Inventory' | 'Sales' | 'System' | 'Reports' | 'Tables' | 'Approvals' | 'WhatsApp' | 'Notifications';
+  category: 'Auth' | 'User Management' | 'Inventory' | 'Sales' | 'System' | 'Reports' | 'Tables' | 'Approvals' | 'WhatsApp' | 'Notifications' | 'Subscription';
   details: string;
   timestamp: string;
   ipAddress?: string;

@@ -112,15 +112,16 @@ export const KitchenRecipeManager: React.FC<KitchenRecipeManagerProps> = ({
     (!m.category.includes('Beverage') && !m.category.includes('Bar') && !m.category.includes('Beer') && !m.category.includes('Liquor'))
   );
 
+  const term = (searchTerm || '').toLowerCase();
   const filteredKitchenDishes = kitchenMenuItems.filter(m => 
-    m.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    m.category.toLowerCase().includes(searchTerm.toLowerCase())
+    (m.name || '').toLowerCase().includes(term) ||
+    (m.category || '').toLowerCase().includes(term)
   );
 
   const filteredIngredients = ingredients.filter(ing => {
-    const matchesSearch = ing.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          ing.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          (ing.code && ing.code.toLowerCase().includes(searchTerm.toLowerCase()));
+    const matchesSearch = (ing.name || '').toLowerCase().includes(term) ||
+                          (ing.category || '').toLowerCase().includes(term) ||
+                          (ing.code && ing.code.toLowerCase().includes(term));
     const matchesCat = selectedCategory === 'All' || ing.category === selectedCategory;
     return matchesSearch && matchesCat;
   });
@@ -136,9 +137,12 @@ export const KitchenRecipeManager: React.FC<KitchenRecipeManagerProps> = ({
 
     for (const rItem of item.recipe) {
       if (rItem.active === false) continue;
-      const ing = ingredients.find(g => g.id === rItem.ingredientId || g.name.toLowerCase() === rItem.ingredientName.toLowerCase());
+      const ing = ingredients.find(g => 
+        g.id === rItem.ingredientId || 
+        (g.name && rItem.ingredientName && g.name.toLowerCase() === rItem.ingredientName.toLowerCase())
+      );
       if (!ing || ing.stockQuantity <= 0 || rItem.quantity <= 0) {
-        return { portions: 0, bottleneck: rItem.ingredientName };
+        return { portions: 0, bottleneck: rItem.ingredientName || 'Unknown Ingredient' };
       }
 
       const effectiveRecipeQty = calculateEffectiveRecipeQty(rItem.quantity, rItem.wastePercentage || 0, rItem.yieldPercentage || 100);
@@ -159,7 +163,10 @@ export const KitchenRecipeManager: React.FC<KitchenRecipeManagerProps> = ({
   const calculateTotalRecipeCost = (recipe: RecipeIngredient[]) => {
     return recipe.reduce((acc, rItem) => {
       if (rItem.active === false) return acc;
-      const ing = ingredients.find(g => g.id === rItem.ingredientId || g.name.toLowerCase() === rItem.ingredientName.toLowerCase());
+      const ing = ingredients.find(g => 
+        g.id === rItem.ingredientId || 
+        (g.name && rItem.ingredientName && g.name.toLowerCase() === rItem.ingredientName.toLowerCase())
+      );
       return acc + calculateRecipeIngredientCost(rItem, ing);
     }, 0);
   };

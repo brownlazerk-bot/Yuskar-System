@@ -8,10 +8,41 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- ==============================================================================
--- 2. TABLE DEFINITIONS
+-- 2. SAFE PRODUCTION DATABASE MIGRATION SCRIPT (RUN IN SUPABASE SQL EDITOR)
+-- ==============================================================================
+/*
+-- Step 1: Ensure business_id column exists on hotel_store
+ALTER TABLE public.hotel_store ADD COLUMN IF NOT EXISTS business_id TEXT;
+
+-- Step 2: Safely assign all existing hotel_store rows to real business ID: biz-1786805821046
+UPDATE public.hotel_store 
+SET business_id = 'biz-1786805821046' 
+WHERE business_id IS NULL OR business_id = '';
+
+-- Step 3: Enforce NOT NULL and foreign key constraint
+ALTER TABLE public.hotel_store ALTER COLUMN business_id SET NOT NULL;
+ALTER TABLE public.hotel_store 
+  DROP CONSTRAINT IF EXISTS hotel_store_business_id_fkey,
+  ADD CONSTRAINT hotel_store_business_id_fkey 
+  FOREIGN KEY (business_id) REFERENCES public.businesses(id) ON DELETE CASCADE;
+
+-- Step 4: Rebuild Primary Key as composite (business_id, key)
+ALTER TABLE public.hotel_store DROP CONSTRAINT IF EXISTS hotel_store_pkey;
+ALTER TABLE public.hotel_store ADD PRIMARY KEY (business_id, key);
+
+-- Step 5: Drop legacy 'biz_default' defaults if they exist
+ALTER TABLE public.ingredients ALTER COLUMN business_id DROP DEFAULT;
+ALTER TABLE public.recipes ALTER COLUMN business_id DROP DEFAULT;
+ALTER TABLE public.categories ALTER COLUMN business_id DROP DEFAULT;
+ALTER TABLE public.inventory_items ALTER COLUMN business_id DROP DEFAULT;
+ALTER TABLE public.stock_movements ALTER COLUMN business_id DROP DEFAULT;
+*/
+
+-- ==============================================================================
+-- 3. TABLE DEFINITIONS
 -- ==============================================================================
 
--- 2.1 Businesses Table
+-- 3.1 Businesses Table
 CREATE TABLE IF NOT EXISTS public.businesses (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -32,7 +63,7 @@ CREATE TABLE IF NOT EXISTS public.businesses (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 2.2 Profiles Table (Linked to auth.users.id)
+-- 3.2 Profiles Table (Linked to auth.users.id)
 -- Super Admin has role = 'Super Admin', is_super_admin = TRUE, and business_id = NULL
 -- Normal users MUST always have a non-null business_id
 CREATE TABLE IF NOT EXISTS public.profiles (
@@ -57,7 +88,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   last_login_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 2.3 Subscriptions Table
+-- 3.3 Subscriptions Table
 CREATE TABLE IF NOT EXISTS public.subscriptions (
   id TEXT PRIMARY KEY,
   business_id TEXT NOT NULL REFERENCES public.businesses(id) ON DELETE CASCADE,
@@ -85,7 +116,7 @@ CREATE TABLE IF NOT EXISTS public.subscriptions (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 2.4 Subscription Payments Table
+-- 3.4 Subscription Payments Table
 CREATE TABLE IF NOT EXISTS public.subscription_payments (
   id TEXT PRIMARY KEY,
   business_id TEXT NOT NULL REFERENCES public.businesses(id) ON DELETE CASCADE,
@@ -106,7 +137,7 @@ CREATE TABLE IF NOT EXISTS public.subscription_payments (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 2.5 System Settings Table (Global configuration managed by Super Admin)
+-- 3.5 System Settings Table (Global configuration managed by Super Admin)
 CREATE TABLE IF NOT EXISTS public.system_settings (
   key TEXT PRIMARY KEY,
   value JSONB NOT NULL,
@@ -115,15 +146,7 @@ CREATE TABLE IF NOT EXISTS public.system_settings (
   updated_by TEXT
 );
 
--- Seed default global system settings
-INSERT INTO public.system_settings (key, value, description)
-VALUES 
-  ('pricing_plans', '{"standard_monthly_fee": 100000, "currency": "RWF", "grace_period_default_days": 7}'::jsonb, 'Default SaaS Subscription Pricing & Grace Period'),
-  ('momo_config', '{"merchant_number": "0726134041", "merchant_name": "Smart Hospitality Cloud Ltd", "currency": "RWF", "enabled": true}'::jsonb, 'MTN MoMo Payment Gateway Configuration'),
-  ('supported_business_types', '["Hotel", "Restaurant", "Bar / Lounge", "Cafe", "Resort", "Nightclub", "Multi-Service Hospitality"]'::jsonb, 'Permitted Business Facility Types')
-ON CONFLICT (key) DO NOTHING;
-
--- 2.6 Audit Logs Table
+-- 3.6 Audit Logs Table
 CREATE TABLE IF NOT EXISTS public.audit_logs (
   id TEXT PRIMARY KEY,
   business_id TEXT, -- NULL for system-level Super Admin actions
@@ -138,7 +161,7 @@ CREATE TABLE IF NOT EXISTS public.audit_logs (
   timestamp TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 2.7 Multi-Tenant Operational Tables (Menu, Orders, etc.)
+-- 3.7 Multi-Tenant Operational Tables
 CREATE TABLE IF NOT EXISTS public.menu_items (
   id TEXT PRIMARY KEY,
   business_id TEXT NOT NULL REFERENCES public.businesses(id) ON DELETE CASCADE,
@@ -182,14 +205,17 @@ CREATE TABLE IF NOT EXISTS public.orders (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 3.8 Multi-Tenant Key-Value Store for Real-Time Device Sync
 CREATE TABLE IF NOT EXISTS public.hotel_store (
-  key TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL REFERENCES public.businesses(id) ON DELETE CASCADE,
+  key TEXT NOT NULL,
   data JSONB NOT NULL,
-  updated_at TIMESTAMPTZ DEFAULT NOW()
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (business_id, key)
 );
 
 -- ==============================================================================
--- 3. SECURITY DEFINER AUTHORIZATION FUNCTIONS
+-- 4. SECURITY DEFINER AUTHORIZATION FUNCTIONS
 -- ==============================================================================
 
 -- Helper Function 1: Check if the authenticated user is a Super Admin
@@ -255,7 +281,7 @@ BEGIN
     v_role := 'Manager';
   END IF;
 
-  v_biz_id := COALESCE(NEW.raw_user_meta_data->>'business_id', 'biz-primary-01');
+  v_biz_id := COALESCE(NEW.raw_user_meta_data->>'business_id', NULL);
 
   INSERT INTO public.profiles (
     id,
@@ -293,7 +319,7 @@ CREATE TRIGGER on_auth_user_created
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
 -- ==============================================================================
--- 4. ROW LEVEL SECURITY (RLS) ENABLEMENT & POLICIES
+-- 5. ROW LEVEL SECURITY (RLS) ENABLEMENT & POLICIES
 -- ==============================================================================
 
 ALTER TABLE public.businesses ENABLE ROW LEVEL SECURITY;
@@ -306,10 +332,11 @@ ALTER TABLE public.menu_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.hotel_store ENABLE ROW LEVEL SECURITY;
 
--- 4.1 Profiles Policies
+-- 5.1 Profiles Policies
 DROP POLICY IF EXISTS "Profiles select policy" ON public.profiles;
 CREATE POLICY "Profiles select policy"
 ON public.profiles FOR SELECT
+TO authenticated
 USING (
   public.is_super_admin() OR
   id = auth.uid() OR 
@@ -319,14 +346,24 @@ USING (
 DROP POLICY IF EXISTS "Profiles update policy" ON public.profiles;
 CREATE POLICY "Profiles update policy"
 ON public.profiles FOR UPDATE
+TO authenticated
 USING (
   public.is_super_admin() OR
   id = auth.uid()
+)
+WITH CHECK (
+  public.is_super_admin() OR (
+    id = auth.uid() AND 
+    (business_id IS NOT DISTINCT FROM public.get_auth_business_id()) AND 
+    is_super_admin = FALSE AND 
+    role <> 'Super Admin'
+  )
 );
 
 DROP POLICY IF EXISTS "Profiles insert policy" ON public.profiles;
 CREATE POLICY "Profiles insert policy"
 ON public.profiles FOR INSERT
+TO authenticated
 WITH CHECK (
   public.is_super_admin() OR
   id = auth.uid()
@@ -335,14 +372,16 @@ WITH CHECK (
 DROP POLICY IF EXISTS "Profiles delete policy" ON public.profiles;
 CREATE POLICY "Profiles delete policy"
 ON public.profiles FOR DELETE
+TO authenticated
 USING (
   public.is_super_admin()
 );
 
--- 4.2 Businesses Policies
+-- 5.2 Businesses Policies
 DROP POLICY IF EXISTS "Businesses select policy" ON public.businesses;
 CREATE POLICY "Businesses select policy"
 ON public.businesses FOR SELECT
+TO authenticated
 USING (
   public.is_super_admin() OR
   id = public.get_auth_business_id()
@@ -351,6 +390,7 @@ USING (
 DROP POLICY IF EXISTS "Businesses insert policy" ON public.businesses;
 CREATE POLICY "Businesses insert policy"
 ON public.businesses FOR INSERT
+TO authenticated
 WITH CHECK (
   public.is_super_admin() OR
   auth.uid() IS NOT NULL
@@ -359,6 +399,7 @@ WITH CHECK (
 DROP POLICY IF EXISTS "Businesses update policy" ON public.businesses;
 CREATE POLICY "Businesses update policy"
 ON public.businesses FOR UPDATE
+TO authenticated
 USING (
   public.is_super_admin() OR
   id = public.get_auth_business_id()
@@ -367,14 +408,16 @@ USING (
 DROP POLICY IF EXISTS "Businesses delete policy" ON public.businesses;
 CREATE POLICY "Businesses delete policy"
 ON public.businesses FOR DELETE
+TO authenticated
 USING (
   public.is_super_admin()
 );
 
--- 4.3 Subscriptions Policies
+-- 5.3 Subscriptions Policies
 DROP POLICY IF EXISTS "Subscriptions select policy" ON public.subscriptions;
 CREATE POLICY "Subscriptions select policy"
 ON public.subscriptions FOR SELECT
+TO authenticated
 USING (
   public.is_super_admin() OR
   business_id = public.get_auth_business_id()
@@ -383,6 +426,7 @@ USING (
 DROP POLICY IF EXISTS "Subscriptions insert policy" ON public.subscriptions;
 CREATE POLICY "Subscriptions insert policy"
 ON public.subscriptions FOR INSERT
+TO authenticated
 WITH CHECK (
   public.is_super_admin() OR
   auth.uid() IS NOT NULL
@@ -391,22 +435,24 @@ WITH CHECK (
 DROP POLICY IF EXISTS "Subscriptions update policy" ON public.subscriptions;
 CREATE POLICY "Subscriptions update policy"
 ON public.subscriptions FOR UPDATE
+TO authenticated
 USING (
-  public.is_super_admin() OR
-  business_id = public.get_auth_business_id()
+  public.is_super_admin()
 );
 
 DROP POLICY IF EXISTS "Subscriptions delete policy" ON public.subscriptions;
 CREATE POLICY "Subscriptions delete policy"
 ON public.subscriptions FOR DELETE
+TO authenticated
 USING (
   public.is_super_admin()
 );
 
--- 4.4 Subscription Payments Policies
+-- 5.4 Subscription Payments Policies
 DROP POLICY IF EXISTS "Payments select policy" ON public.subscription_payments;
 CREATE POLICY "Payments select policy"
 ON public.subscription_payments FOR SELECT
+TO authenticated
 USING (
   public.is_super_admin() OR
   business_id = public.get_auth_business_id()
@@ -415,6 +461,7 @@ USING (
 DROP POLICY IF EXISTS "Payments insert policy" ON public.subscription_payments;
 CREATE POLICY "Payments insert policy"
 ON public.subscription_payments FOR INSERT
+TO authenticated
 WITH CHECK (
   public.is_super_admin() OR
   auth.uid() IS NOT NULL
@@ -423,14 +470,16 @@ WITH CHECK (
 DROP POLICY IF EXISTS "Payments update policy" ON public.subscription_payments;
 CREATE POLICY "Payments update policy"
 ON public.subscription_payments FOR UPDATE
+TO authenticated
 USING (
   public.is_super_admin()
 );
 
--- 4.5 System Settings Policies
+-- 5.5 System Settings Policies
 DROP POLICY IF EXISTS "System settings select policy" ON public.system_settings;
 CREATE POLICY "System settings select policy"
 ON public.system_settings FOR SELECT
+TO authenticated
 USING (
   auth.uid() IS NOT NULL
 );
@@ -438,6 +487,7 @@ USING (
 DROP POLICY IF EXISTS "System settings manage policy" ON public.system_settings;
 CREATE POLICY "System settings manage policy"
 ON public.system_settings FOR ALL
+TO authenticated
 USING (
   public.is_super_admin()
 )
@@ -445,10 +495,11 @@ WITH CHECK (
   public.is_super_admin()
 );
 
--- 4.6 Audit Logs Policies
+-- 5.6 Audit Logs Policies
 DROP POLICY IF EXISTS "Audit logs select policy" ON public.audit_logs;
 CREATE POLICY "Audit logs select policy"
 ON public.audit_logs FOR SELECT
+TO authenticated
 USING (
   public.is_super_admin() OR
   (business_id IS NOT NULL AND business_id = public.get_auth_business_id())
@@ -457,14 +508,16 @@ USING (
 DROP POLICY IF EXISTS "Audit logs insert policy" ON public.audit_logs;
 CREATE POLICY "Audit logs insert policy"
 ON public.audit_logs FOR INSERT
+TO authenticated
 WITH CHECK (
   auth.uid() IS NOT NULL
 );
 
--- 4.7 Menu Items & Orders Policies
+-- 5.7 Menu Items & Orders Policies
 DROP POLICY IF EXISTS "Menu items select policy" ON public.menu_items;
 CREATE POLICY "Menu items select policy"
 ON public.menu_items FOR SELECT
+TO authenticated
 USING (
   public.is_super_admin() OR
   business_id = public.get_auth_business_id()
@@ -473,6 +526,7 @@ USING (
 DROP POLICY IF EXISTS "Menu items modify policy" ON public.menu_items;
 CREATE POLICY "Menu items modify policy"
 ON public.menu_items FOR ALL
+TO authenticated
 USING (
   public.is_super_admin() OR
   business_id = public.get_auth_business_id()
@@ -485,6 +539,7 @@ WITH CHECK (
 DROP POLICY IF EXISTS "Orders select policy" ON public.orders;
 CREATE POLICY "Orders select policy"
 ON public.orders FOR SELECT
+TO authenticated
 USING (
   public.is_super_admin() OR
   business_id = public.get_auth_business_id()
@@ -493,6 +548,7 @@ USING (
 DROP POLICY IF EXISTS "Orders modify policy" ON public.orders;
 CREATE POLICY "Orders modify policy"
 ON public.orders FOR ALL
+TO authenticated
 USING (
   public.is_super_admin() OR
   business_id = public.get_auth_business_id()
@@ -502,12 +558,19 @@ WITH CHECK (
   business_id = public.get_auth_business_id()
 );
 
--- 4.8 Hotel Store Policy
+-- 5.8 Hotel Store Strict Multi-Tenant Policy
 DROP POLICY IF EXISTS "Hotel store sync policy" ON public.hotel_store;
-CREATE POLICY "Hotel store sync policy"
+DROP POLICY IF EXISTS "Tenant isolation for hotel_store" ON public.hotel_store;
+
+CREATE POLICY "Tenant isolation for hotel_store"
 ON public.hotel_store FOR ALL
-USING (auth.uid() IS NOT NULL)
-WITH CHECK (auth.uid() IS NOT NULL);
+TO authenticated
+USING (
+  business_id = public.get_auth_business_id() OR public.is_super_admin()
+)
+WITH CHECK (
+  business_id = public.get_auth_business_id() OR public.is_super_admin()
+);
 
 -- ==============================================================================
 -- 5. SUPER ADMIN SETUP INSTRUCTIONS (FOR PROJECT OWNER/ADMINISTRATOR)

@@ -37,12 +37,13 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({ darkMode = false }) 
   // Filter Logic
   const filteredLogs = logs.filter(log => {
     // 1. Search term
+    const term = (searchTerm || '').toLowerCase();
     const matchesSearch = 
-      log.userName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.userEmail.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.action.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.details.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.category.toLowerCase().includes(searchTerm.toLowerCase());
+      (log.userName || '').toLowerCase().includes(term) ||
+      (log.userEmail || '').toLowerCase().includes(term) ||
+      (log.action || '').toLowerCase().includes(term) ||
+      (log.details || '').toLowerCase().includes(term) ||
+      (log.category || '').toLowerCase().includes(term);
 
     // 2. Category
     const matchesCategory = categoryFilter === 'All' || log.category === categoryFilter;

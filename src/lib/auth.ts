@@ -175,8 +175,8 @@ export interface RegisterResult {
  * Role & permissions are verified strictly from the database profile.
  */
 export async function loginUser(email: string, password: string): Promise<LoginResult> {
-  const cleanEmail = email.trim().toLowerCase();
-  const cleanPassword = password.trim();
+  const cleanEmail = (email || '').trim().toLowerCase();
+  const cleanPassword = (password || '').trim();
 
   if (!cleanEmail || !cleanPassword) {
     return { success: false, error: 'Email and password are required.' };
@@ -297,7 +297,7 @@ export async function loginUser(email: string, password: string): Promise<LoginR
       });
       return {
         success: false,
-        error: `Your account is currently ${userProfile.status.toLowerCase()}. Please contact your business administrator.`
+        error: `Your account is currently ${userProfile.status ? userProfile.status.toLowerCase() : 'inactive'}. Please contact your business administrator.`
       };
     }
 
@@ -388,12 +388,12 @@ export async function registerBusinessUser(params: {
   password: string;
   pin?: string;
 }): Promise<RegisterResult> {
-  const cleanBizName = params.businessName.trim() || 'My Business Facility';
-  const cleanFullName = params.ownerFullName.trim();
-  const cleanEmail = params.email.trim().toLowerCase();
-  const cleanPhone = params.phone.trim() || '+250 788 000 000';
-  const cleanPassword = params.password.trim();
-  const cleanPin = params.pin?.trim() || '1234';
+  const cleanBizName = (params.businessName || '').trim() || 'My Business Facility';
+  const cleanFullName = (params.ownerFullName || '').trim();
+  const cleanEmail = (params.email || '').trim().toLowerCase();
+  const cleanPhone = (params.phone || '').trim() || '+250 788 000 000';
+  const cleanPassword = (params.password || '').trim();
+  const cleanPin = (params.pin || '').trim() || '1234';
 
   if (!cleanFullName || !cleanEmail || !cleanPassword) {
     return { success: false, error: 'Full Name, Email, and Password are required.' };
@@ -558,11 +558,11 @@ export async function registerStaffUser(params: {
   pin: string;
   role: SystemRole;
 }): Promise<RegisterResult> {
-  const cleanFullName = params.fullName.trim();
-  const cleanEmail = params.email.trim().toLowerCase();
-  const cleanPhone = params.phone.trim();
-  const cleanPassword = params.password.trim();
-  const cleanPin = params.pin.trim() || '1234';
+  const cleanFullName = (params.fullName || '').trim();
+  const cleanEmail = (params.email || '').trim().toLowerCase();
+  const cleanPhone = (params.phone || '').trim();
+  const cleanPassword = (params.password || '').trim();
+  const cleanPin = (params.pin || '').trim() || '1234';
 
   if (!cleanFullName || !cleanEmail || !cleanPassword) {
     return { success: false, error: 'Full Name, Email, and Password are required.' };
