@@ -10,7 +10,7 @@ import { AppUser, SystemRole, UserAccessStatus, UserPaymentStatus } from '../typ
 import { 
   loadUsers, saveUsers, addAuditLog,
   grantUserGracePeriod, approveUserPaymentAccess, lockUserAccess,
-  revokeUserSession, updateUserAccessAndPayment
+  revokeUserSession, updateUserAccessAndPayment, getActiveBusinessId
 } from '../lib/storage';
 import { registerStaffUser } from '../lib/auth';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
@@ -104,7 +104,7 @@ export const UserManagement: React.FC<UserManagementProps> = ({ currentUser, dar
   const handleSaveUser = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanEmail = email.trim().toLowerCase();
-    const targetBizId = currentUser.businessId || 'biz-primary-01';
+    const targetBizId = currentUser.businessId || getActiveBusinessId() || '';
 
     let updatedList = [...users];
 
@@ -164,7 +164,9 @@ export const UserManagement: React.FC<UserManagementProps> = ({ currentUser, dar
         return;
       }
 
-      let newUserId = `usr-${Date.now()}`;
+      let newUserId = typeof crypto !== 'undefined' && crypto.randomUUID 
+        ? crypto.randomUUID() 
+        : `00000000-0000-4000-8000-${String(Date.now()).slice(-12).padStart(12, '0')}`;
 
       // Register in Supabase
       if (isSupabaseConfigured()) {

@@ -10,6 +10,16 @@ import {
   getSupabaseConfig, saveSupabaseConfig, testSupabaseConnection, 
   pushAllToSupabase, pullAllFromSupabase, SUPABASE_SQL_SCHEMA, SupabaseConfig 
 } from '../lib/supabaseSync';
+import {
+  inspectLocalMenuItems,
+  fetchSupabaseMenuItems,
+  safeMergeMenuItems,
+  executeSafeMenuItemsMigration,
+  LocalInspectionResult,
+  SupabaseInspectionResult,
+  MergeAnalysisResult,
+  SafeMigrationResult
+} from '../lib/migrationService';
 
 interface ManagerSettingsProps {
   menuItems: MenuItem[];
@@ -46,6 +56,59 @@ export const ManagerSettings: React.FC<ManagerSettingsProps> = ({
   const [isSyncingSb, setIsSyncingSb] = useState(false);
   const [sbSyncMsg, setSbSyncMsg] = useState('');
   const [copiedSql, setCopiedSql] = useState(false);
+
+  // Safe Migration Center State
+  const [localInspect, setLocalInspect] = useState<LocalInspectionResult | null>(null);
+  const [sbInspect, setSbInspect] = useState<SupabaseInspectionResult | null>(null);
+  const [mergeInfo, setMergeInfo] = useState<MergeAnalysisResult | null>(null);
+  const [migResult, setMigResult] = useState<SafeMigrationResult | null>(null);
+  const [isInspecting, setIsInspecting] = useState(false);
+  const [isMigrating, setIsMigrating] = useState(false);
+  const [migrationError, setMigrationError] = useState('');
+
+  const TARGET_BUSINESS_UUID = '64843dc5-b24c-4af2-87d5-efaf91f5d5e3';
+
+  const handleRunInspection = async () => {
+    setIsInspecting(true);
+    setMigrationError('');
+    try {
+      const local = inspectLocalMenuItems(TARGET_BUSINESS_UUID);
+      setLocalInspect(local);
+
+      const sb = await fetchSupabaseMenuItems(TARGET_BUSINESS_UUID);
+      setSbInspect(sb);
+
+      const merge = safeMergeMenuItems(sb.items, local.items, TARGET_BUSINESS_UUID);
+      setMergeInfo(merge);
+    } catch (err: any) {
+      setMigrationError(err.message || 'Error running inspection');
+    } finally {
+      setIsInspecting(false);
+    }
+  };
+
+  const handleExecuteSafeMigration = async () => {
+    if (!window.confirm(`Are you sure you want to merge and migrate all products to Supabase for SEVEN TO SEVEN Sky View Resort? A safe backup snapshot will be automatically created first.`)) {
+      return;
+    }
+    setIsMigrating(true);
+    setMigrationError('');
+    try {
+      const result = await executeSafeMenuItemsMigration(TARGET_BUSINESS_UUID);
+      setMigResult(result);
+      if (result.success) {
+        setSbSyncMsg(`Successfully migrated ${result.mergedCount} menu items to Supabase public.hotel_store! Verified in cloud database.`);
+        // Refresh inspection
+        await handleRunInspection();
+      } else {
+        setMigrationError(`Migration error: ${result.error?.message || JSON.stringify(result.error)}`);
+      }
+    } catch (err: any) {
+      setMigrationError(err.message || 'Error during migration execution');
+    } finally {
+      setIsMigrating(false);
+    }
+  };
 
   useEffect(() => {
     const config = getSupabaseConfig();
@@ -669,6 +732,120 @@ export const ManagerSettings: React.FC<ManagerSettingsProps> = ({
               </button>
             </div>
           </form>
+
+          {/* Safe Menu Items & Product Catalog Migration Center */}
+          <div className="p-5 rounded-2xl border border-sky-500/30 bg-sky-500/5 space-y-4">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+              <div>
+                <h4 className="font-bold text-sm text-sky-900 dark:text-sky-200 flex items-center space-x-2">
+                  <Database className="w-4 h-4 text-sky-500" />
+                  <span>SEVEN TO SEVEN Sky View Resort — Product Migration & Cloud Database Verification</span>
+                </h4>
+                <p className="text-xs text-sky-700 dark:text-sky-300 mt-0.5">
+                  Business UUID: <code className="px-1.5 py-0.5 rounded bg-sky-100 dark:bg-sky-900/50 font-mono text-[11px]">64843dc5-b24c-4af2-87d5-efaf91f5d5e3</code>
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleRunInspection}
+                  disabled={isInspecting}
+                  className="px-3.5 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold flex items-center space-x-1.5 shadow-sm disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isInspecting ? 'animate-spin' : ''}`} />
+                  <span>{isInspecting ? 'Inspecting...' : 'Inspect & Compare Data'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleExecuteSafeMigration}
+                  disabled={isMigrating || !sbEnabled}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center space-x-1.5 shadow-md shadow-emerald-600/20 disabled:opacity-50"
+                >
+                  <CloudLightning className={`w-3.5 h-3.5 ${isMigrating ? 'animate-spin' : ''}`} />
+                  <span>{isMigrating ? 'Migrating...' : 'Run Safe Cloud Migration'}</span>
+                </button>
+              </div>
+            </div>
+
+            {migrationError && (
+              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-300 text-xs font-medium flex items-center space-x-2">
+                <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                <span>{migrationError}</span>
+              </div>
+            )}
+
+            {/* Inspection & Comparison Details */}
+            {localInspect && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2 text-xs">
+                {/* Local Storage Card */}
+                <div className="p-3.5 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 space-y-2">
+                  <div className="flex justify-between items-center font-bold">
+                    <span className="text-gray-700 dark:text-gray-300">Local Browser Cache</span>
+                    <span className="px-2 py-0.5 rounded-full bg-sky-100 dark:bg-sky-900/50 text-sky-700 dark:text-sky-300 font-mono">
+                      {localInspect.itemCount} items
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-gray-500 font-mono break-all">
+                    Key: {localInspect.activeKeyUsed}
+                  </div>
+                  <div className="text-[11px] text-gray-600 dark:text-gray-400 space-y-1">
+                    <div>UUID IDs: {localInspect.idTypesSummary.uuidCount}</div>
+                    <div>Custom IDs: {localInspect.idTypesSummary.customIdCount}</div>
+                  </div>
+                </div>
+
+                {/* Supabase Cloud Card */}
+                <div className="p-3.5 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 space-y-2">
+                  <div className="flex justify-between items-center font-bold">
+                    <span className="text-gray-700 dark:text-gray-300">Supabase Cloud Record</span>
+                    <span className="px-2 py-0.5 rounded-full bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300 font-mono">
+                      {sbInspect ? `${sbInspect.itemCount} items` : 'Not loaded'}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-gray-500 font-mono">
+                    Updated: {sbInspect?.updatedAt ? new Date(sbInspect.updatedAt).toLocaleString() : 'N/A'}
+                  </div>
+                  <div className="text-[11px] text-gray-600 dark:text-gray-400">
+                    Table: <code className="font-mono">public.hotel_store</code>
+                  </div>
+                </div>
+
+                {/* Safe Merge Target */}
+                <div className="p-3.5 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 space-y-2">
+                  <div className="flex justify-between items-center font-bold">
+                    <span className="text-gray-700 dark:text-gray-300">Merged Cloud Target</span>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 font-mono font-bold">
+                      {mergeInfo ? `${mergeInfo.finalMergedCount} items` : 'Ready'}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
+                    {mergeInfo?.localAlreadyIncludesSupabase 
+                      ? 'Local contains all previous items (Deduplicated)' 
+                      : `Overlap: ${mergeInfo?.overlapCount || 0} items`}
+                  </div>
+                  <div className="text-[11px] text-gray-500">
+                    Backup: Auto-created before save
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Migration Success Confirmation */}
+            {migResult && migResult.success && (
+              <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-800 dark:text-emerald-200 text-xs space-y-1">
+                <div className="font-bold flex items-center space-x-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                  <span>Migration Successfully Executed and Verified!</span>
+                </div>
+                <div className="text-[11px] text-emerald-700 dark:text-emerald-300">
+                  Total {migResult.verifiedDatabaseCount ?? migResult.mergedCount} menu items verified in Supabase <code className="font-mono">public.hotel_store</code>.
+                  Recoverable safety backup created at: <code className="font-mono text-[10px]">{migResult.backupKey}</code>.
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Sync Actions Card */}
           <div className="p-5 rounded-2xl border border-gray-200 dark:border-gray-800 space-y-3">

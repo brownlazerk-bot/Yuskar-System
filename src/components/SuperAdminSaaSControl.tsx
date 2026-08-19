@@ -305,7 +305,8 @@ export const SuperAdminSaaSControl: React.FC<SuperAdminSaaSControlProps> = ({
       return;
     }
 
-    const newId = `biz-${Date.now()}`;
+    const newId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8000-${String(Date.now()).slice(-12).padStart(12, '0')}`;
+    const subId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8000-${String(Date.now() + 1).slice(-12).padStart(12, '0')}`;
     const code = `BIZ-${Math.floor(1000 + Math.random() * 9000)}`;
 
     const newBiz: Business = {
@@ -319,12 +320,12 @@ export const SuperAdminSaaSControl: React.FC<SuperAdminSaaSControlProps> = ({
       momoPaymentNumber: SAAS_MOMO_MERCHANT_NUMBER,
       currency: 'RWF',
       status: 'PENDING_PAYMENT',
-      subscriptionId: `SUB-${newId}`,
+      subscriptionId: subId,
       createdAt: new Date().toISOString()
     };
 
     const newSub: Subscription = {
-      id: `SUB-${newId}`,
+      id: subId,
       businessId: newId,
       businessName: newBiz.name,
       planName: 'Monthly SaaS Business License',

@@ -22,6 +22,7 @@ export interface SubscriptionPlanConfig {
   currency: 'RWF';
   badge: string;
   description: string;
+  features?: string[];
 }
 
 export const DEFAULT_SUBSCRIPTION_PLANS: Record<SubscriptionPlanDuration, SubscriptionPlanConfig> = {
@@ -32,7 +33,8 @@ export const DEFAULT_SUBSCRIPTION_PLANS: Record<SubscriptionPlanDuration, Subscr
     amount: 100000,
     currency: 'RWF',
     badge: '30 Days',
-    description: 'Standard monthly operations terminal access'
+    description: 'Standard monthly operations terminal access',
+    features: ['All Employees Included', 'Multi-Device Sync', 'Cloud Backup & Sync', 'Standard 24/7 Support']
   },
   QUARTERLY: {
     id: 'QUARTERLY',
@@ -41,7 +43,8 @@ export const DEFAULT_SUBSCRIPTION_PLANS: Record<SubscriptionPlanDuration, Subscr
     amount: 280000,
     currency: 'RWF',
     badge: '90 Days',
-    description: '3 months full enterprise terminal access'
+    description: '3 months full enterprise terminal access',
+    features: ['All Employees Included', 'Multi-Device Sync', 'Cloud Backup & Sync', 'Priority Support Desk', 'Save ~20,000 RWF']
   },
   SEMI_ANNUAL: {
     id: 'SEMI_ANNUAL',
@@ -50,7 +53,8 @@ export const DEFAULT_SUBSCRIPTION_PLANS: Record<SubscriptionPlanDuration, Subscr
     amount: 550000,
     currency: 'RWF',
     badge: '180 Days',
-    description: '6 months comprehensive multi-terminal license'
+    description: '6 months comprehensive multi-terminal license',
+    features: ['All Employees Included', 'Multi-Device Sync', 'Cloud Backup & Sync', 'VIP Account Manager', 'Save ~50,000 RWF']
   },
   YEARLY: {
     id: 'YEARLY',
@@ -59,7 +63,8 @@ export const DEFAULT_SUBSCRIPTION_PLANS: Record<SubscriptionPlanDuration, Subscr
     amount: 1000000,
     currency: 'RWF',
     badge: '365 Days',
-    description: '1 full year priority enterprise license'
+    description: '1 full year priority enterprise license',
+    features: ['All Employees Included', 'Multi-Device Sync', 'Cloud Backup & Sync', 'Unlimited POS Terminals', '2 Months Free Included']
   }
 };
 
@@ -197,7 +202,8 @@ export interface LicenseActionResult {
  */
 export async function generateBusinessLicense(params: GenerateLicenseParams): Promise<LicenseActionResult> {
   try {
-    const planConfig = SUBSCRIPTION_PLANS[params.plan] || SUBSCRIPTION_PLANS.MONTHLY;
+    const plansConfig = loadSubscriptionPlansConfig();
+    const planConfig = plansConfig[params.plan] || plansConfig.MONTHLY || DEFAULT_SUBSCRIPTION_PLANS.MONTHLY;
     const durationDays = params.customDurationDays || planConfig.durationDays;
     
     // Prefix based on business name or standard
@@ -207,7 +213,9 @@ export async function generateBusinessLicense(params: GenerateLicenseParams): Pr
     const licenseCode = generateLicenseCode(prefixCandidate || 'YUSK');
     const licenseHash = await hashLicenseCode(licenseCode);
 
-    const licenseId = `LIC-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const licenseId = typeof crypto !== 'undefined' && crypto.randomUUID 
+      ? crypto.randomUUID() 
+      : `00000000-0000-4000-8000-${String(Date.now()).slice(-12).padStart(12, '0')}`;
     const now = new Date().toISOString();
 
     const newLicense: SubscriptionLicense = {

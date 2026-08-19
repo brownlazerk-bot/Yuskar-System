@@ -102,7 +102,7 @@ function initializeCleanSlateIfNeeded() {
 
 initializeCleanSlateIfNeeded();
 
-export function getActiveBusinessId(): string {
+export function getActiveBusinessId(): string | null {
   try {
     const rawUser = localStorage.getItem(KEYS.CURRENT_USER);
     if (rawUser) {
@@ -114,8 +114,15 @@ export function getActiveBusinessId(): string {
       const b = JSON.parse(rawBiz);
       if (b && b.id) return b.id;
     }
+    const rawList = localStorage.getItem(KEYS.BUSINESSES);
+    if (rawList) {
+      const list = JSON.parse(rawList);
+      if (Array.isArray(list) && list.length > 0 && list[0]?.id) {
+        return list[0].id;
+      }
+    }
   } catch {}
-  return 'biz-1786805821046'; // fallback to existing live business ID
+  return null;
 }
 
 const GLOBAL_KEYS = new Set([
@@ -158,7 +165,7 @@ function getStorage<T>(key: string, defaultValue: T): T {
   }
 }
 
-import { notifyDataChange } from './syncEngine';
+import { notifyDataChange, updateSyncStatus } from './syncEngine';
 import { pushKeyToServer, recordLocalWrite } from './serverSync';
 import { getSupabaseClient } from './supabaseSync';
 
@@ -196,6 +203,57 @@ const LOCAL_TO_SERVER_KEY: Record<string, string> = {
   [KEYS.BUSINESSES]: 'businesses'
 };
 
+/**
+ * Persists an operational dataset to Supabase public.hotel_store as the primary store.
+ * Explicitly validates responses, checks { data, error }, and logs detailed errors without silent suppression.
+ */
+export async function saveToSupabaseStore(
+  serverKey: string,
+  data: any,
+  targetBusinessId?: string | null
+): Promise<{ success: boolean; data?: any; error?: any }> {
+  const client = getSupabaseClient();
+  if (!client) {
+    console.warn(`[Supabase Store Write] Supabase client not configured for key "${serverKey}".`);
+    return { success: false, error: 'Supabase client is not configured' };
+  }
+
+  const activeBizId = targetBusinessId || getActiveBusinessId();
+  if (!activeBizId) {
+    const msg = `[Supabase Store Write] Cannot persist "${serverKey}": Missing authorized business UUID.`;
+    console.error(msg);
+    return { success: false, error: msg };
+  }
+
+  const payload = {
+    business_id: activeBizId,
+    key: serverKey,
+    data: data,
+    updated_at: new Date().toISOString()
+  };
+
+  try {
+    updateSyncStatus({ state: 'syncing' });
+    const { data: resData, error: upsertErr } = await client
+      .from('hotel_store')
+      .upsert([payload], { onConflict: 'business_id,key' });
+
+    if (upsertErr) {
+      console.error(`[Supabase Store Write Failed] Key: "${serverKey}", Business: "${activeBizId}"`, upsertErr);
+      updateSyncStatus({ state: 'error', lastError: upsertErr.message || 'Supabase write error' });
+      return { success: false, error: upsertErr };
+    }
+
+    console.log(`[Supabase Store Write Success] Key: "${serverKey}", Business: "${activeBizId}"`);
+    updateSyncStatus({ state: 'synced', lastSyncedAt: new Date().toISOString(), lastError: undefined });
+    return { success: true, data: resData };
+  } catch (err: any) {
+    console.error(`[Supabase Store Write Exception] Unexpected error on key "${serverKey}":`, err);
+    updateSyncStatus({ state: 'error', lastError: err?.message || String(err) });
+    return { success: false, error: err };
+  }
+}
+
 function setStorage<T>(key: string, value: T): void {
   try {
     const scopedKey = getScopedKey(key);
@@ -209,24 +267,20 @@ function setStorage<T>(key: string, value: T): void {
     notifyDataChange(key);
     notifyDataChange(scopedKey);
     
-    // Asynchronously push to central Express backend server for cross-device sync (HP, Dell, Phone)
+    // Push to central Express backend server for local multi-device sync
     const serverKey = LOCAL_TO_SERVER_KEY[key];
     if (serverKey) {
       recordLocalWrite(serverKey);
       pushKeyToServer(serverKey, value);
 
-      // Also auto-push to Supabase Cloud if configured with active business context
-      const client = getSupabaseClient();
+      // Push to Supabase Cloud with explicit response check
       const activeBizId = getActiveBusinessId();
-      if (client && activeBizId) {
-        Promise.resolve(
-          client.from('hotel_store').upsert([{
-            business_id: activeBizId,
-            key: serverKey,
-            data: value,
-            updated_at: new Date().toISOString()
-          }], { onConflict: 'business_id,key' })
-        ).catch(() => {});
+      if (activeBizId) {
+        saveToSupabaseStore(serverKey, value, activeBizId).then(result => {
+          if (!result.success) {
+            console.error(`[Cloud Sync Notice] Failed to synchronize key "${serverKey}" to Supabase Cloud:`, result.error);
+          }
+        });
       }
     }
   } catch (err) {
@@ -238,8 +292,43 @@ export function loadMenuItems(): MenuItem[] {
   return getStorage<MenuItem[]>(KEYS.MENU_ITEMS, INITIAL_MENU_ITEMS);
 }
 
+/**
+ * Cloud-First Menu Items Save
+ * Persists to Supabase public.hotel_store first, verifies errors, then updates local cache.
+ */
+export async function saveMenuItemsAsync(items: MenuItem[]): Promise<{ success: boolean; error?: any }> {
+  const activeBizId = getActiveBusinessId();
+  const serverKey = 'menuItems';
+
+  if (activeBizId) {
+    const res = await saveToSupabaseStore(serverKey, items, activeBizId);
+    if (!res.success) {
+      console.error('[Cloud-First Error] Supabase write failed for menuItems:', res.error);
+      return { success: false, error: res.error };
+    }
+  }
+
+  // Update local cache and notify listeners
+  try {
+    const scopedKey = getScopedKey(KEYS.MENU_ITEMS);
+    localStorage.setItem(scopedKey, JSON.stringify(items));
+    localStorage.setItem(KEYS.MENU_ITEMS, JSON.stringify(items));
+    notifyDataChange(KEYS.MENU_ITEMS);
+    notifyDataChange(scopedKey);
+  } catch (e) {
+    console.warn('[Cache Update Warning]', e);
+  }
+
+  return { success: true };
+}
+
 export function saveMenuItems(items: MenuItem[]): void {
-  setStorage(KEYS.MENU_ITEMS, items);
+  // Fire cloud-first asynchronous write with validation
+  saveMenuItemsAsync(items).then(res => {
+    if (!res.success) {
+      console.error('[Cloud-First Save Error] Menu item save could not be persisted to Supabase:', res.error);
+    }
+  });
 }
 
 export function loadTables(): Table[] {
@@ -335,7 +424,7 @@ export function saveGuestRooms(rooms: GuestRoom[]): void {
 
 export const INITIAL_STAFF_USERS: AppUser[] = [
   {
-    id: 'usr-cashier-01',
+    id: '00000000-0000-4000-8000-000000000011',
     fullName: 'John Mugisha',
     email: 'cashier@grandhorizon.com',
     phone: '+250 788 111 222',
@@ -348,7 +437,7 @@ export const INITIAL_STAFF_USERS: AppUser[] = [
     createdAt: new Date().toISOString()
   },
   {
-    id: 'usr-kitchen-01',
+    id: '00000000-0000-4000-8000-000000000012',
     fullName: 'Chef Eric Nshuti',
     email: 'kitchen@grandhorizon.com',
     phone: '+250 788 333 444',
@@ -361,7 +450,7 @@ export const INITIAL_STAFF_USERS: AppUser[] = [
     createdAt: new Date().toISOString()
   },
   {
-    id: 'usr-reception-01',
+    id: '00000000-0000-4000-8000-000000000013',
     fullName: 'Grace Uwase',
     email: 'reception@grandhorizon.com',
     phone: '+250 788 555 666',
@@ -374,7 +463,7 @@ export const INITIAL_STAFF_USERS: AppUser[] = [
     createdAt: new Date().toISOString()
   },
   {
-    id: 'usr-accountant-01',
+    id: '00000000-0000-4000-8000-000000000014',
     fullName: 'David Habimana',
     email: 'accountant@grandhorizon.com',
     phone: '+250 788 777 888',
@@ -387,7 +476,7 @@ export const INITIAL_STAFF_USERS: AppUser[] = [
     createdAt: new Date().toISOString()
   },
   {
-    id: 'usr-manager-01',
+    id: '00000000-0000-4000-8000-000000000015',
     fullName: 'Patrick Bizimana',
     email: 'manager@grandhorizon.com',
     phone: '+250 788 999 000',
@@ -517,7 +606,7 @@ export function addExpense(expense: Omit<Expense, 'id' | 'expenseNumber' | 'time
   const num = expenses.length + 1001;
   const newExp: Expense = {
     ...expense,
-    id: `EXP-${Date.now()}-${Math.floor(Math.random() * 100)}`,
+    id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8000-${String(Date.now()).slice(-12).padStart(12, '0')}`,
     expenseNumber: `EXP-${num}`,
     timestamp: new Date().toISOString()
   };
@@ -539,7 +628,7 @@ export function addCashMovement(movement: Omit<CashMovement, 'id' | 'timestamp' 
   const now = new Date();
   const newMov: CashMovement = {
     ...movement,
-    id: `CSH-${Date.now()}-${Math.floor(Math.random() * 100)}`,
+    id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8000-${String(Date.now()).slice(-12).padStart(12, '0')}`,
     timestamp: now.toISOString(),
     date: now.toISOString().split('T')[0],
     time: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -561,7 +650,7 @@ export function addDailyClosing(record: Omit<DailyClosingRecord, 'id' | 'closedA
   const closings = loadDailyClosings();
   const newClosing: DailyClosingRecord = {
     ...record,
-    id: `DCR-${Date.now()}`,
+    id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8000-${String(Date.now()).slice(-12).padStart(12, '0')}`,
     closedAt: new Date().toISOString()
   };
   saveDailyClosings([newClosing, ...closings]);
@@ -710,7 +799,7 @@ export function addReportHistoryRecord(record: Omit<ReportDeliveryHistory, 'id' 
   const history = loadReportHistory();
   const created: ReportDeliveryHistory = {
     ...record,
-    id: `HIST-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8000-${String(Date.now()).slice(-12).padStart(12, '0')}`,
     createdAt: new Date().toISOString()
   };
   saveReportHistory([created, ...history]);
@@ -739,7 +828,7 @@ export function addNotificationItem(item: Omit<NotificationItem, 'id' | 'created
   const items = loadNotifications();
   const created: NotificationItem = {
     ...item,
-    id: `NOTIF-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8000-${String(Date.now()).slice(-12).padStart(12, '0')}`,
     createdAt: new Date().toISOString()
   };
   saveNotifications([created, ...items]);
@@ -860,7 +949,7 @@ export function addPOSDeposit(dep: Omit<POSDepositRecord, 'id' | 'depositNumber'
   const num = deposits.length + 1001;
   const newDep: POSDepositRecord = {
     ...dep,
-    id: `DEP-${Date.now()}-${Math.floor(Math.random() * 100)}`,
+    id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8000-${String(Date.now()).slice(-12).padStart(12, '0')}`,
     depositNumber: `DEP-${num}`,
     timestamp: new Date().toISOString()
   };
@@ -943,7 +1032,7 @@ export const SAAS_MONTHLY_FEE = 100000; // 100,000 RWF
 export const SAAS_MOMO_MERCHANT_NUMBER = '0726134041'; // Official fixed MTN MoMo recipient
 
 export const INITIAL_BUSINESS: Business = {
-  id: 'biz-primary-01',
+  id: '00000000-0000-4000-8000-000000000001',
   name: 'Kigali Horizon Lounge & Resort',
   code: 'BIZ-1001',
   category: 'Hotel',
@@ -954,13 +1043,13 @@ export const INITIAL_BUSINESS: Business = {
   address: 'KG 15 Ave, Kigali, Rwanda',
   currency: 'RWF',
   status: 'ACTIVE',
-  subscriptionId: 'SUB-2026-001',
+  subscriptionId: '00000000-0000-4000-8000-000000000002',
   createdAt: '2026-08-14T00:00:00.000Z'
 };
 
 export const INITIAL_SUBSCRIPTION: Subscription = {
-  id: 'SUB-2026-001',
-  businessId: 'biz-primary-01',
+  id: '00000000-0000-4000-8000-000000000002',
+  businessId: '00000000-0000-4000-8000-000000000001',
   businessName: 'Kigali Horizon Lounge & Resort',
   planName: 'Monthly SaaS Business License',
   amount: 100000,
@@ -1008,10 +1097,10 @@ export function saveSubscriptions(subscriptions: Subscription[]): void {
 export function loadSubscriptionPayments(): SubscriptionPayment[] {
   const initialPayments: SubscriptionPayment[] = [
     {
-      id: 'PAY-2026-001',
-      businessId: 'biz-primary-01',
+      id: '00000000-0000-4000-8000-000000000003',
+      businessId: '00000000-0000-4000-8000-000000000001',
       businessName: 'Kigali Horizon Lounge & Resort',
-      subscriptionId: 'SUB-2026-001',
+      subscriptionId: '00000000-0000-4000-8000-000000000002',
       amount: 100000,
       currency: 'RWF',
       paymentMethod: 'MTN MoMo (Rwanda)',

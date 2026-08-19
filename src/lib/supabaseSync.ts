@@ -8,7 +8,7 @@ import {
   normalizeSupabaseUrl, 
   validateSupabaseConfig 
 } from './supabase';
-import { getActiveBusinessId, getScopedKey } from './storage';
+import { getActiveBusinessId, getScopedKey, saveToSupabaseStore } from './storage';
 
 export interface SupabaseConfig {
   url: string;
@@ -127,37 +127,164 @@ export async function testSupabaseConnection(url: string, anonKey: string): Prom
   * CREATE POLICY "Allow public select/insert/update/delete" ON public.hotel_store FOR ALL USING (true) WITH CHECK (true);
   */
 export const SUPABASE_SQL_SCHEMA = `
--- Business & Multi-Tenant Tables Schema for Supabase
+-- =========================================================================
+-- COMPLETE COMPATIBLE SUPABASE SQL SCHEMA FOR YUSKAR MANAGEMENT SYSTEM
+-- Compatible with all ID types (Text slugs & UUIDs) without FK conflicts
+-- =========================================================================
+
+-- 1. BUSINESSES TABLE (Multi-Tenant Business Registry)
 CREATE TABLE IF NOT EXISTS public.businesses (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   code TEXT,
+  category TEXT DEFAULT 'Bar & Restaurant',
+  type TEXT DEFAULT 'Bar & Restaurant',
+  owner_name TEXT,
+  owner_email TEXT,
+  owner_phone TEXT,
   phone TEXT,
   email TEXT,
   address TEXT,
+  tax_number TEXT,
+  logo_url TEXT,
+  momo_payment_number TEXT DEFAULT '0726134041',
   currency TEXT DEFAULT 'RWF',
+  status TEXT DEFAULT 'PENDING_PAYMENT',
+  subscription_id TEXT,
+  bonus_days INTEGER DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS public.users (
-  id TEXT PRIMARY KEY,
-  business_id TEXT DEFAULT 'biz_default',
+-- Ensure id column is TEXT even if table was previously created with UUID
+DO $$ 
+BEGIN
+  ALTER TABLE public.businesses ALTER COLUMN id TYPE TEXT;
+EXCEPTION
+  WHEN OTHERS THEN NULL;
+END $$;
+
+-- 2. PROFILES TABLE (Linked with Supabase auth.users)
+CREATE TABLE IF NOT EXISTS public.profiles (
+  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  business_id TEXT,
   full_name TEXT NOT NULL,
   email TEXT NOT NULL,
   phone TEXT,
-  role TEXT DEFAULT 'Cashier',
+  role TEXT DEFAULT 'Manager',
   status TEXT DEFAULT 'Active',
-  password_hash TEXT,
-  pin_code TEXT,
+  access_status TEXT DEFAULT 'Approved',
+  payment_status TEXT DEFAULT 'Paid',
+  pin_code TEXT DEFAULT '1234',
   is_super_admin BOOLEAN DEFAULT FALSE,
+  device_info JSONB,
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  last_login_at TIMESTAMPTZ
+  last_login_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 3. SUBSCRIPTIONS TABLE (SaaS License Tracking)
+CREATE TABLE IF NOT EXISTS public.subscriptions (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL,
+  business_name TEXT NOT NULL,
+  plan_name TEXT DEFAULT 'Monthly SaaS Business License',
+  plan TEXT DEFAULT 'MONTHLY_STANDARD',
+  monthly_fee NUMERIC DEFAULT 100000,
+  price_per_month NUMERIC DEFAULT 100000,
+  amount NUMERIC DEFAULT 100000,
+  currency TEXT DEFAULT 'RWF',
+  status TEXT DEFAULT 'PENDING_PAYMENT',
+  start_date TIMESTAMPTZ,
+  expiry_date TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ,
+  next_billing_date TIMESTAMPTZ,
+  grace_period_days INTEGER DEFAULT 7,
+  grace_expires_at TIMESTAMPTZ,
+  payment_method TEXT DEFAULT 'MTN_MOMO',
+  momo_number TEXT DEFAULT '0726134041',
+  last_payment_date TIMESTAMPTZ,
+  last_payment_reference TEXT,
+  last_payment_amount NUMERIC,
+  transaction_reference TEXT,
+  next_payment_amount NUMERIC DEFAULT 100000,
+  bonus_days_granted INTEGER DEFAULT 0,
+  bonus_reason TEXT,
+  is_bonus_active BOOLEAN DEFAULT FALSE,
+  auto_renew BOOLEAN DEFAULT TRUE,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 4. SUBSCRIPTION LICENSES TABLE (Activation Keys)
+CREATE TABLE IF NOT EXISTS public.subscription_licenses (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL,
+  business_name TEXT,
+  subscription_id TEXT,
+  license_code TEXT NOT NULL UNIQUE,
+  license_hash TEXT NOT NULL,
+  plan TEXT DEFAULT 'MONTHLY',
+  duration_days INTEGER DEFAULT 30,
+  start_date TIMESTAMPTZ,
+  end_date TIMESTAMPTZ,
+  status TEXT DEFAULT 'ACTIVE',
+  activated_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ,
+  created_by TEXT DEFAULT 'Super Admin',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 5. SUBSCRIPTION PAYMENTS TABLE (MoMo/Cash History)
+CREATE TABLE IF NOT EXISTS public.subscription_payments (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL,
+  business_name TEXT NOT NULL,
+  subscription_id TEXT,
+  amount NUMERIC NOT NULL,
+  currency TEXT DEFAULT 'RWF',
+  payment_method TEXT DEFAULT 'MTN_MOMO',
+  payer_phone TEXT,
+  recipient_phone TEXT DEFAULT '0726134041',
+  payment_reference TEXT,
+  transaction_reference TEXT,
+  status TEXT DEFAULT 'SUCCESSFUL',
+  paid_at TIMESTAMPTZ DEFAULT NOW(),
+  verified_by TEXT DEFAULT 'MTN MoMo Gateway',
+  duration_months INTEGER DEFAULT 1,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 6. HOTEL STORE (Multi-Tenant Key-Value Store for All Operational Data)
+CREATE TABLE IF NOT EXISTS public.hotel_store (
+  business_id TEXT NOT NULL,
+  key TEXT NOT NULL,
+  data JSONB NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (business_id, key)
+);
+
+-- 7. AUDIT LOGS TABLE
+CREATE TABLE IF NOT EXISTS public.audit_logs (
+  id TEXT PRIMARY KEY,
+  business_id TEXT,
+  user_id TEXT,
+  user_name TEXT,
+  user_role TEXT,
+  user_email TEXT,
+  action TEXT NOT NULL,
+  category TEXT,
+  details TEXT,
+  timestamp TIMESTAMPTZ DEFAULT NOW(),
+  ip_address TEXT
+);
+
+-- 8. INGREDIENTS TABLE (Kitchen & Bar Inventory)
 CREATE TABLE IF NOT EXISTS public.ingredients (
   id TEXT PRIMARY KEY,
-  business_id TEXT DEFAULT 'biz_default',
+  business_id TEXT,
   code TEXT,
   name TEXT NOT NULL,
   category TEXT,
@@ -179,9 +306,10 @@ CREATE TABLE IF NOT EXISTS public.ingredients (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 9. RECIPES TABLE (Automated Bill of Materials & Stock Deduction)
 CREATE TABLE IF NOT EXISTS public.recipes (
   id TEXT PRIMARY KEY,
-  business_id TEXT DEFAULT 'biz_default',
+  business_id TEXT,
   code TEXT,
   name TEXT NOT NULL,
   linked_menu_item_id TEXT,
@@ -198,9 +326,10 @@ CREATE TABLE IF NOT EXISTS public.recipes (
   updated_by TEXT
 );
 
+-- 10. MENU ITEMS TABLE
 CREATE TABLE IF NOT EXISTS public.menu_items (
   id TEXT PRIMARY KEY,
-  business_id TEXT DEFAULT 'biz_default',
+  business_id TEXT,
   code TEXT,
   barcode TEXT,
   name TEXT NOT NULL,
@@ -221,33 +350,10 @@ CREATE TABLE IF NOT EXISTS public.menu_items (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS public.categories (
-  id TEXT PRIMARY KEY,
-  business_id TEXT DEFAULT 'biz_default',
-  name TEXT NOT NULL,
-  type TEXT DEFAULT 'Menu',
-  description TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS public.inventory_items (
-  id TEXT PRIMARY KEY,
-  business_id TEXT DEFAULT 'biz_default',
-  code TEXT,
-  name TEXT NOT NULL,
-  category TEXT,
-  location TEXT,
-  quantity NUMERIC DEFAULT 0,
-  unit TEXT,
-  reorder_level NUMERIC DEFAULT 10,
-  cost_price NUMERIC DEFAULT 0,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
+-- 11. STOCK MOVEMENTS TABLE
 CREATE TABLE IF NOT EXISTS public.stock_movements (
   id TEXT PRIMARY KEY,
-  business_id TEXT DEFAULT 'biz_default',
+  business_id TEXT,
   ingredient_id TEXT,
   ingredient_name TEXT,
   movement_type TEXT,
@@ -268,31 +374,201 @@ CREATE TABLE IF NOT EXISTS public.stock_movements (
   timestamp TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Store Multi-Tenant Key-Value Store Table for Seamless Dynamic Sync
-CREATE TABLE IF NOT EXISTS public.hotel_store (
-  business_id TEXT NOT NULL REFERENCES public.businesses(id) ON DELETE CASCADE,
-  key TEXT NOT NULL,
-  data JSONB NOT NULL,
-  updated_at TIMESTAMPTZ DEFAULT NOW(),
-  PRIMARY KEY (business_id, key)
-);
+-- 12. AUTOMATIC PROFILE TRIGGER ON SUPABASE AUTH SIGNUP
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.profiles (
+    id,
+    business_id,
+    full_name,
+    email,
+    phone,
+    role,
+    status,
+    access_status,
+    payment_status,
+    is_super_admin,
+    created_at,
+    last_login_at
+  ) VALUES (
+    NEW.id,
+    NEW.raw_user_meta_data->>'business_id',
+    COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.email),
+    NEW.email,
+    NEW.raw_user_meta_data->>'phone',
+    COALESCE(NEW.raw_user_meta_data->>'role', 'Manager'),
+    'Active',
+    'Approved',
+    'Paid',
+    (NEW.raw_user_meta_data->>'role' = 'Super Admin' OR NEW.raw_user_meta_data->>'is_super_admin' = 'true'),
+    NOW(),
+    NOW()
+  )
+  ON CONFLICT (id) DO UPDATE SET
+    business_id = COALESCE(EXCLUDED.business_id, profiles.business_id),
+    full_name = COALESCE(EXCLUDED.full_name, profiles.full_name),
+    role = COALESCE(EXCLUDED.role, profiles.role),
+    last_login_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Enable Row Level Security (RLS) across all tables
-ALTER TABLE public.businesses ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.ingredients ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.recipes ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.menu_items ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.inventory_items ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.stock_movements ENABLE ROW LEVEL SECURITY;
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+-- 13. ENABLE ROW LEVEL SECURITY WITH SECURE MULTI-TENANT POLICIES
+-- Helper function to verify business membership based on authenticated user's profile
+CREATE OR REPLACE FUNCTION public.is_business_member(target_biz_id TEXT)
+RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM public.profiles p
+    WHERE p.id = auth.uid()
+      AND (
+        p.business_id = target_biz_id
+        OR p.business_id::text = target_biz_id::text
+        OR p.is_super_admin = true
+        OR p.role = 'Super Admin'
+      )
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
+
+-- A. HOTEL STORE RLS POLICIES
 ALTER TABLE public.hotel_store ENABLE ROW LEVEL SECURITY;
 
--- Note on RLS Security Architecture:
-DROP POLICY IF EXISTS "Tenant isolation for hotel_store" ON public.hotel_store;
-CREATE POLICY "Tenant isolation for hotel_store" ON public.hotel_store FOR ALL TO authenticated
-USING (business_id = public.get_auth_business_id() OR public.is_super_admin())
-WITH CHECK (business_id = public.get_auth_business_id() OR public.is_super_admin());
+DROP POLICY IF EXISTS "Public & Auth Access HotelStore" ON public.hotel_store;
+DROP POLICY IF EXISTS "hotel_store_select_policy" ON public.hotel_store;
+CREATE POLICY "hotel_store_select_policy"
+  ON public.hotel_store
+  FOR SELECT
+  TO authenticated
+  USING (
+    public.is_business_member(business_id)
+  );
+
+DROP POLICY IF EXISTS "hotel_store_insert_policy" ON public.hotel_store;
+CREATE POLICY "hotel_store_insert_policy"
+  ON public.hotel_store
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (
+    public.is_business_member(business_id)
+  );
+
+DROP POLICY IF EXISTS "hotel_store_update_policy" ON public.hotel_store;
+CREATE POLICY "hotel_store_update_policy"
+  ON public.hotel_store
+  FOR UPDATE
+  TO authenticated
+  USING (
+    public.is_business_member(business_id)
+  )
+  WITH CHECK (
+    public.is_business_member(business_id)
+  );
+
+DROP POLICY IF EXISTS "hotel_store_delete_policy" ON public.hotel_store;
+CREATE POLICY "hotel_store_delete_policy"
+  ON public.hotel_store
+  FOR DELETE
+  TO authenticated
+  USING (
+    public.is_business_member(business_id)
+  );
+
+-- B. PROFILES TABLE RLS POLICIES
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Public & Auth Access Profiles" ON public.profiles;
+DROP POLICY IF EXISTS "profiles_select_policy" ON public.profiles;
+CREATE POLICY "profiles_select_policy"
+  ON public.profiles
+  FOR SELECT
+  TO authenticated
+  USING (
+    id = auth.uid()
+    OR business_id IN (SELECT p.business_id FROM public.profiles p WHERE p.id = auth.uid() AND p.business_id IS NOT NULL)
+    OR EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND (p.is_super_admin = true OR p.role = 'Super Admin'))
+  );
+
+DROP POLICY IF EXISTS "profiles_insert_policy" ON public.profiles;
+CREATE POLICY "profiles_insert_policy"
+  ON public.profiles
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (
+    id = auth.uid()
+    OR EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND (p.is_super_admin = true OR p.role = 'Super Admin'))
+  );
+
+DROP POLICY IF EXISTS "profiles_update_policy" ON public.profiles;
+CREATE POLICY "profiles_update_policy"
+  ON public.profiles
+  FOR UPDATE
+  TO authenticated
+  USING (
+    id = auth.uid()
+    OR EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND (p.is_super_admin = true OR p.role = 'Super Admin'))
+  )
+  WITH CHECK (
+    id = auth.uid()
+    OR EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND (p.is_super_admin = true OR p.role = 'Super Admin'))
+  );
+
+-- C. BUSINESSES TABLE RLS POLICIES
+ALTER TABLE public.businesses ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Public & Auth Access Businesses" ON public.businesses;
+DROP POLICY IF EXISTS "businesses_select_policy" ON public.businesses;
+CREATE POLICY "businesses_select_policy"
+  ON public.businesses
+  FOR SELECT
+  TO authenticated
+  USING (
+    id::text IN (SELECT p.business_id::text FROM public.profiles p WHERE p.id = auth.uid() AND p.business_id IS NOT NULL)
+    OR EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND (p.is_super_admin = true OR p.role = 'Super Admin'))
+  );
+
+DROP POLICY IF EXISTS "businesses_insert_policy" ON public.businesses;
+CREATE POLICY "businesses_insert_policy"
+  ON public.businesses
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (
+    EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND (p.is_super_admin = true OR p.role = 'Super Admin'))
+    OR auth.uid() IS NOT NULL
+  );
+
+DROP POLICY IF EXISTS "businesses_update_policy" ON public.businesses;
+CREATE POLICY "businesses_update_policy"
+  ON public.businesses
+  FOR UPDATE
+  TO authenticated
+  USING (
+    id::text IN (SELECT p.business_id::text FROM public.profiles p WHERE p.id = auth.uid() AND p.business_id IS NOT NULL)
+    OR EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND (p.is_super_admin = true OR p.role = 'Super Admin'))
+  )
+  WITH CHECK (
+    id::text IN (SELECT p.business_id::text FROM public.profiles p WHERE p.id = auth.uid() AND p.business_id IS NOT NULL)
+    OR EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND (p.is_super_admin = true OR p.role = 'Super Admin'))
+  );
+
+-- D. SUBSCRIPTIONS RLS POLICIES
+ALTER TABLE public.subscriptions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Public & Auth Access Subscriptions" ON public.subscriptions;
+DROP POLICY IF EXISTS "subscriptions_access_policy" ON public.subscriptions;
+CREATE POLICY "subscriptions_access_policy"
+  ON public.subscriptions
+  FOR ALL
+  TO authenticated
+  USING (
+    public.is_business_member(business_id)
+  )
+  WITH CHECK (
+    public.is_business_member(business_id)
+  );
 `.trim();
 
 /**
@@ -406,14 +682,7 @@ export async function pullAllFromSupabase(targetBusinessId?: string): Promise<{ 
 
           // If local had items Supabase was missing, push merged data to Supabase
           if (merged.length > row.data.length) {
-            Promise.resolve(
-              client.from('hotel_store').upsert([{
-                business_id: activeBizId,
-                key: row.key,
-                data: merged,
-                updated_at: new Date().toISOString()
-              }], { onConflict: 'business_id,key' })
-            ).catch(() => {});
+            saveToSupabaseStore(row.key, merged, activeBizId);
           }
         } else {
           const incomingStr = JSON.stringify(row.data);

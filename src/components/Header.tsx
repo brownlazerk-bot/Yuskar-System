@@ -1,17 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Wine, Shield, UserCheck, Clock, Moon, Sun, 
-  AlertTriangle, DollarSign, Key, LogOut, Lock, User, Globe
+  AlertTriangle, DollarSign, Key, LogOut, Lock, User, Globe, Building2, Hotel, Sparkles,
+  Cloud, CloudOff, RefreshCw, CheckCircle2
 } from 'lucide-react';
-import { Shift, UserRole, AppUser } from '../types';
+import { Shift, UserRole, AppUser, Business } from '../types';
 import { formatCurrency } from '../lib/currency';
 import { Language } from '../lib/translations';
+import { getSyncStatus, subscribeToSyncStatus, SyncStatusInfo } from '../lib/syncEngine';
+import { isSupabaseConfigured } from '../lib/supabase';
 
 interface HeaderProps {
   currentShift?: Shift | null;
   userRole: UserRole;
   setUserRole: (role: UserRole) => void;
   currentUser?: AppUser | null;
+  currentBusiness?: Business | null;
   onLogout?: () => void;
   darkMode: boolean;
   setDarkMode: (val: boolean) => void;
@@ -27,6 +31,7 @@ export const Header: React.FC<HeaderProps> = ({
   userRole,
   setUserRole,
   currentUser,
+  currentBusiness,
   onLogout,
   darkMode,
   setDarkMode,
@@ -40,10 +45,18 @@ export const Header: React.FC<HeaderProps> = ({
   const [showPinModal, setShowPinModal] = useState(false);
   const [pinInput, setPinInput] = useState('');
   const [pinError, setPinError] = useState('');
+  const [syncStatus, setSyncStatus] = useState<SyncStatusInfo>(getSyncStatus());
+  const sbConfigured = isSupabaseConfigured();
 
   useEffect(() => {
     const timer = setInterval(() => setTime(new Date()), 1000);
-    return () => clearInterval(timer);
+    const unsub = subscribeToSyncStatus((status) => {
+      setSyncStatus(status);
+    });
+    return () => {
+      clearInterval(timer);
+      unsub();
+    };
   }, []);
 
   const handleRoleToggle = () => {
@@ -69,6 +82,11 @@ export const Header: React.FC<HeaderProps> = ({
     }
   };
 
+  // Resolve business branding details
+  const businessDisplayName = currentBusiness?.name || (currentUser as any)?.businessName || 'YUSKAR MANAGEMENT SYSTEM';
+  const businessCategory = currentBusiness?.category || currentBusiness?.type || 'Hospitality & POS';
+  const businessCode = currentBusiness?.code || (currentBusiness?.id ? currentBusiness.id.toUpperCase() : 'ACTIVE');
+
   return (
     <>
       <header className={`sticky top-0 z-30 transition-colors duration-200 border-b ${
@@ -79,28 +97,65 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             
-            {/* Brand / Logo */}
+            {/* Brand / Logo & Registered Company Name */}
             <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 rounded-xl bg-amber-500 flex items-center justify-center text-slate-950 shadow-md shadow-amber-500/20">
-                <Wine className="w-6 h-6" />
+              <div className="w-10 h-10 rounded-xl bg-amber-500 flex items-center justify-center text-slate-950 shadow-md shadow-amber-500/20 font-black">
+                {currentBusiness?.logoUrl ? (
+                  <img src={currentBusiness.logoUrl} alt="Logo" className="w-full h-full object-cover rounded-xl" />
+                ) : (
+                  <Building2 className="w-5 h-5" />
+                )}
               </div>
               <div>
                 <div className="flex items-center space-x-2">
-                  <h1 className="font-black text-lg tracking-tight leading-tight">
-                    YUSKAR MANAGEMENT SYSTEM
+                  <h1 className="font-black text-lg tracking-tight leading-tight uppercase truncate max-w-[200px] sm:max-w-xs md:max-w-md">
+                    {businessDisplayName}
                   </h1>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full font-extrabold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
-                    ENTERPRISE
+                  <span className="text-[10px] px-2 py-0.5 rounded-full font-extrabold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 uppercase tracking-wider shrink-0">
+                    {businessCode}
                   </span>
                 </div>
-                <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                  Hotel, Restaurant & POS Operations
+                <p className="text-xs text-slate-500 dark:text-slate-400 font-medium truncate max-w-[220px] sm:max-w-xs">
+                  {businessCategory} • Hotel & Resto Operations
                 </p>
               </div>
             </div>
 
             {/* Time Status & Clock */}
-            <div className="hidden md:flex items-center space-x-4">
+            <div className="hidden md:flex items-center space-x-3">
+              {/* Cloud Sync Status Badge */}
+              <div 
+                className={`flex items-center space-x-1.5 text-xs px-2.5 py-1.5 rounded-xl border transition-all ${
+                  !sbConfigured
+                    ? 'bg-slate-100 dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700'
+                    : syncStatus.state === 'synced'
+                    ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+                    : syncStatus.state === 'syncing'
+                    ? 'bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20 animate-pulse'
+                    : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20'
+                }`}
+                title={
+                  !sbConfigured 
+                    ? 'Supabase Cloud not configured' 
+                    : syncStatus.state === 'synced'
+                    ? `Cloud Synced (${syncStatus.pendingWrites} pending)`
+                    : syncStatus.state === 'syncing'
+                    ? 'Syncing to Supabase Cloud...'
+                    : `Sync Error: ${syncStatus.lastError || 'Check connection'}`
+                }
+              >
+                {syncStatus.state === 'syncing' ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-sky-500" />
+                ) : syncStatus.state === 'synced' ? (
+                  <Cloud className="w-3.5 h-3.5 text-emerald-500" />
+                ) : (
+                  <CloudOff className="w-3.5 h-3.5 text-rose-500" />
+                )}
+                <span className="font-semibold text-[11px]">
+                  {!sbConfigured ? 'Local Mode' : syncStatus.state === 'synced' ? 'Cloud Synced' : syncStatus.state === 'syncing' ? 'Syncing...' : 'Sync Alert'}
+                </span>
+              </div>
+
               {/* Realtime Clock */}
               <div className="flex items-center space-x-2 text-xs font-mono text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-3 py-1.5 rounded-xl">
                 <Clock className="w-3.5 h-3.5 text-slate-400" />

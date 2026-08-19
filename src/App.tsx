@@ -259,6 +259,9 @@ export default function App() {
   const handleLoginSuccess = (user: AppUser) => {
     setCurrentUser(user);
     setUserRole(user.role as any);
+    const biz = loadCurrentBusiness();
+    setCurrentBusiness(biz);
+    refreshAllStateFromStorage();
   };
 
   const handleLogout = async () => {
@@ -2237,6 +2240,7 @@ export default function App() {
         userRole={userRole}
         setUserRole={setUserRole}
         currentUser={currentUser}
+        currentBusiness={currentBusiness}
         onLogout={handleLogout}
         darkMode={darkMode}
         setDarkMode={setDarkMode}

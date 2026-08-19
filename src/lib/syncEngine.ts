@@ -241,3 +241,50 @@ export function restoreBackupSnapshot(backup: DatabaseBackup): boolean {
     return false;
   }
 }
+
+export interface SyncStatusInfo {
+  state: 'synced' | 'syncing' | 'offline' | 'error';
+  lastSyncedAt?: string;
+  pendingOfflineCount: number;
+  lastError?: string;
+}
+
+let currentSyncStatus: SyncStatusInfo = {
+  state: 'synced',
+  lastSyncedAt: new Date().toISOString(),
+  pendingOfflineCount: 0
+};
+
+export function getSyncStatus(): SyncStatusInfo {
+  return {
+    ...currentSyncStatus,
+    pendingOfflineCount: getPendingOfflineCount()
+  };
+}
+
+export function updateSyncStatus(update: Partial<SyncStatusInfo>): void {
+  currentSyncStatus = {
+    ...currentSyncStatus,
+    ...update,
+    pendingOfflineCount: getPendingOfflineCount()
+  };
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('HOTEL_SYNC_STATUS_UPDATE', { detail: currentSyncStatus }));
+  }
+}
+
+export function subscribeToSyncStatus(callback: (status: SyncStatusInfo) => void): () => void {
+  const handler = (e: Event) => {
+    const custom = e as CustomEvent;
+    if (custom.detail) callback(custom.detail);
+  };
+  if (typeof window !== 'undefined') {
+    window.addEventListener('HOTEL_SYNC_STATUS_UPDATE', handler);
+  }
+  return () => {
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('HOTEL_SYNC_STATUS_UPDATE', handler);
+    }
+  };
+}
+

@@ -5,7 +5,8 @@ import {
 } from '../types';
 import { 
   saveCurrentUser, clearCurrentUser, loadCurrentUser, 
-  saveCurrentBusiness,
+  saveCurrentBusiness, loadBusinesses, saveBusinesses,
+  loadSubscriptions, saveSubscriptions, loadUsers, saveUsers,
   addAuditLog,
   INITIAL_BUSINESS, INITIAL_SUBSCRIPTION
 } from './storage';
@@ -311,6 +312,13 @@ export async function loginUser(email: string, password: string): Promise<LoginR
 
       if (bizRow) {
         business = mapBusinessRow(bizRow);
+      } else {
+        // Fallback to local businesses registry
+        const localBizs = loadBusinesses();
+        const found = localBizs.find(b => b.id === userProfile.business_id);
+        if (found) {
+          business = found;
+        }
       }
     }
 
@@ -472,7 +480,10 @@ export async function registerBusinessUser(params: {
       updated_at: new Date().toISOString()
     };
 
-    await supabase.from('businesses').insert([newBusinessRow]);
+    const { error: bizInsertErr } = await supabase.from('businesses').insert([newBusinessRow]);
+    if (bizInsertErr) {
+      console.warn('[Supabase Insert Business Note]:', bizInsertErr.message, bizInsertErr);
+    }
 
     // 3. Create Profile Record linked to auth.users.id
     const newProfileRow = {
@@ -491,7 +502,10 @@ export async function registerBusinessUser(params: {
       last_login_at: new Date().toISOString()
     };
 
-    await supabase.from('profiles').upsert([newProfileRow]);
+    const { error: profUpsertErr } = await supabase.from('profiles').upsert([newProfileRow]);
+    if (profUpsertErr) {
+      console.warn('[Supabase Upsert Profile Note]:', profUpsertErr.message, profUpsertErr);
+    }
 
     // 4. Create Initial Subscription Record
     const newSubRow = {
@@ -513,14 +527,35 @@ export async function registerBusinessUser(params: {
       updated_at: new Date().toISOString()
     };
 
-    await supabase.from('subscriptions').insert([newSubRow]);
+    const { error: subInsertErr } = await supabase.from('subscriptions').insert([newSubRow]);
+    if (subInsertErr) {
+      console.warn('[Supabase Insert Subscription Note]:', subInsertErr.message, subInsertErr);
+    }
 
     const appUser = mapProfileToAppUser(newProfileRow, cleanEmail);
     const businessObj = mapBusinessRow(newBusinessRow);
     const subObj = mapSubscriptionRow(newSubRow);
 
+    // Save to active session and local storage lists
     saveCurrentUser(appUser);
     saveCurrentBusiness(businessObj);
+
+    try {
+      const allBizs = loadBusinesses();
+      if (!allBizs.some(b => b.id === businessObj.id)) {
+        saveBusinesses([...allBizs, businessObj]);
+      }
+      const allSubs = loadSubscriptions();
+      if (!allSubs.some(s => s.id === subObj.id || s.businessId === subObj.businessId)) {
+        saveSubscriptions([...allSubs, subObj]);
+      }
+      const allUsers = loadUsers();
+      if (!allUsers.some(u => u.id === appUser.id || u.email.toLowerCase() === appUser.email.toLowerCase())) {
+        saveUsers([...allUsers, appUser]);
+      }
+    } catch (localStoreErr) {
+      console.warn('[Local Store Registry Save Note]:', localStoreErr);
+    }
 
     await logAudit({
       userId: appUser.id,
@@ -754,6 +789,12 @@ export async function getCurrentUser(): Promise<{
 
         if (bizRow) {
           business = mapBusinessRow(bizRow);
+        } else {
+          const localBizs = loadBusinesses();
+          const found = localBizs.find(b => b.id === profileRow.business_id);
+          if (found) {
+            business = found;
+          }
         }
       }
 
