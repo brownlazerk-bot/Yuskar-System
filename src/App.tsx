@@ -65,10 +65,9 @@ import { PaymentsAndSubscriptionView } from './components/PaymentsAndSubscriptio
 import { SuperAdminSaaSControl } from './components/SuperAdminSaaSControl';
 import { SuperAdminControlCenter } from './components/SuperAdminControlCenter';
 import { SubscriptionReminderBanner } from './components/SubscriptionReminderBanner';
-import { loadUsers } from './lib/storage';
-import { subscribeToSync, createDailyBackup, flushOfflineQueue } from './lib/syncEngine';
-import { startServerSyncPolling, pullServerState } from './lib/serverSync';
-import { startSupabaseSyncPolling, pullAllFromSupabase } from './lib/supabaseSync';
+import { loadUsers, fetchAllBusinessDataFromSupabase, subscribeToDataChanges } from './lib/storage';
+import { createDailyBackup } from './lib/syncEngine';
+import { startSupabaseSyncPolling } from './lib/supabaseSync';
 import { WifiOff, RefreshCw, Bell, Database, AlertCircle, CheckCircle } from 'lucide-react';
 import { formatCurrency } from './lib/currency';
 
@@ -136,9 +135,8 @@ export default function App() {
     setSubscriptionsList(loadSubscriptions());
   };
 
-  // Load Initial Data, Sync Engine, Online/Offline & Auto-Backup
+  // Load Initial Data strictly from Supabase Cloud as authoritative store
   useEffect(() => {
-    // Initial pull from central database & Supabase
     const loadDatabaseWithFeedback = async () => {
       setIsDbLoading(true);
       setDbSyncError(null);
@@ -153,13 +151,12 @@ export default function App() {
         }
 
         const activeBizId = business?.id || user?.businessId || getActiveBusinessId();
-        await pullServerState();
         if (activeBizId) {
-          await pullAllFromSupabase(activeBizId);
+          await fetchAllBusinessDataFromSupabase(activeBizId);
         }
         refreshAllStateFromStorage();
       } catch (err: any) {
-        setDbSyncError(err.message || 'Error connecting to database server');
+        setDbSyncError(err.message || 'Error connecting to Supabase database');
         refreshAllStateFromStorage();
       } finally {
         setIsDbLoading(false);
@@ -173,7 +170,7 @@ export default function App() {
       if (event === 'SIGNED_OUT') {
         setCurrentUser(null);
       } else if (event === 'SIGNED_IN' && session?.user) {
-        getCurrentUser().then(({ user, business }) => {
+        getCurrentUser().then(async ({ user, business }) => {
           if (user) {
             setCurrentUser(user);
             setUserRole(user.role as any);
@@ -181,12 +178,14 @@ export default function App() {
           if (business) {
             setCurrentBusiness(business);
           }
-          pullAllFromSupabase(business?.id);
+          const activeBizId = business?.id || user?.businessId || getActiveBusinessId();
+          await fetchAllBusinessDataFromSupabase(activeBizId);
+          refreshAllStateFromStorage();
         });
       }
     });
 
-    // Trigger daily backup
+    // Daily backup snapshot
     try {
       const loggedInUser = loadCurrentUser();
       createDailyBackup(loggedInUser?.fullName || 'System Auto-Backup');
@@ -194,23 +193,19 @@ export default function App() {
       // Backup fallback
     }
 
-    // Subscribe to real-time sync across connected tabs/windows & devices
-    const unsubscribeSync = subscribeToSync((_entityKey) => {
+    // Subscribe to real-time data changes
+    const unsubscribeSync = subscribeToDataChanges((_entityKey) => {
       refreshAllStateFromStorage();
     });
 
-    // Start central Express server polling (syncs HP, Dell, Phone, etc.)
-    const stopServerPolling = startServerSyncPolling(3000);
-
-    // Start Supabase Cloud polling if configured
-    const stopSupabasePolling = startSupabaseSyncPolling(4000);
+    // Start background sync polling with Supabase Cloud
+    const stopSupabasePolling = startSupabaseSyncPolling(15000);
 
     // Handle online/offline network transitions
     const handleOnline = () => {
       setIsOnline(true);
-      flushOfflineQueue();
-      pullServerState().then(() => refreshAllStateFromStorage());
-      pullAllFromSupabase().then(() => refreshAllStateFromStorage());
+      const activeBizId = getActiveBusinessId();
+      fetchAllBusinessDataFromSupabase(activeBizId).then(() => refreshAllStateFromStorage());
     };
     const handleOffline = () => {
       setIsOnline(false);
@@ -220,11 +215,10 @@ export default function App() {
     window.addEventListener('offline', handleOffline);
 
     return () => {
-      if (authSubscription && typeof authSubscription.unsubscribe === 'function') {
-        authSubscription.unsubscribe();
+      if (authSubscription && typeof (authSubscription as any).unsubscribe === 'function') {
+        (authSubscription as any).unsubscribe();
       }
       unsubscribeSync();
-      stopServerPolling();
       stopSupabasePolling();
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
@@ -266,8 +260,8 @@ export default function App() {
     const biz = loadCurrentBusiness();
     setCurrentBusiness(biz);
     try {
-      await pullServerState();
-      await pullAllFromSupabase();
+      const activeBizId = biz?.id || user?.businessId || getActiveBusinessId();
+      await fetchAllBusinessDataFromSupabase(activeBizId);
     } catch (e) {
       // Non-blocking sync pull
     }
@@ -2216,8 +2210,8 @@ export default function App() {
             onClick={async () => {
               setIsDbLoading(true);
               setDbSyncError(null);
-              await pullServerState();
-              await pullAllFromSupabase();
+              const activeBizId = currentBusiness?.id || currentUser?.businessId || getActiveBusinessId();
+              await fetchAllBusinessDataFromSupabase(activeBizId);
               refreshAllStateFromStorage();
               setIsDbLoading(false);
             }}

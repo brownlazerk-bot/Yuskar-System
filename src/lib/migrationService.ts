@@ -1,5 +1,5 @@
 import { getSupabaseClient } from './supabaseSync';
-import { getActiveBusinessId, getScopedKey, loadMenuItems } from './storage';
+import { getActiveBusinessId, getScopedKey, loadMenuItems, saveMenuItems, normalizeBusinessUuid, DEFAULT_RESORT_UUID } from './storage';
 import { MenuItem } from '../types';
 
 export interface LocalInspectionResult {
@@ -59,8 +59,9 @@ const MENU_ITEMS_BASE_KEY = 'hotel_menu_items_prod';
 /**
  * Inspects browser localStorage for menu items under scoped and base keys.
  */
-export function inspectLocalMenuItems(businessId: string = '64843dc5-b24c-4af2-87d5-efaf91f5d5e3'): LocalInspectionResult {
-  const scopedKey = `hotel_${businessId}_menu_items_prod`;
+export function inspectLocalMenuItems(businessId?: string): LocalInspectionResult {
+  const resolvedBizId = normalizeBusinessUuid(businessId || getActiveBusinessId());
+  const scopedKey = `hotel_${resolvedBizId}_menu_items_prod`;
   const rawScoped = typeof localStorage !== 'undefined' ? localStorage.getItem(scopedKey) : null;
   const rawBase = typeof localStorage !== 'undefined' ? localStorage.getItem(MENU_ITEMS_BASE_KEY) : null;
 
@@ -148,7 +149,8 @@ export function inspectLocalMenuItems(businessId: string = '64843dc5-b24c-4af2-8
 /**
  * Fetches the existing menuItems record directly from Supabase public.hotel_store
  */
-export async function fetchSupabaseMenuItems(businessId: string = '64843dc5-b24c-4af2-87d5-efaf91f5d5e3'): Promise<SupabaseInspectionResult> {
+export async function fetchSupabaseMenuItems(businessId?: string): Promise<SupabaseInspectionResult> {
+  const resolvedBizId = normalizeBusinessUuid(businessId || getActiveBusinessId());
   const client = getSupabaseClient();
   if (!client) {
     throw new Error('Supabase client is not configured.');
@@ -157,7 +159,7 @@ export async function fetchSupabaseMenuItems(businessId: string = '64843dc5-b24c
   const { data, error } = await client
     .from('hotel_store')
     .select('key, business_id, data, updated_at')
-    .eq('business_id', businessId)
+    .eq('business_id', resolvedBizId)
     .eq('key', 'menuItems')
     .maybeSingle();
 
@@ -167,7 +169,7 @@ export async function fetchSupabaseMenuItems(businessId: string = '64843dc5-b24c
 
   if (!data || !data.data) {
     return {
-      businessId,
+      businessId: resolvedBizId,
       exists: false,
       itemCount: 0,
       updatedAt: null,
@@ -318,13 +320,14 @@ export function safeMergeMenuItems(
  * Executes the complete safe migration to Supabase public.hotel_store with verification.
  */
 export async function executeSafeMenuItemsMigration(
-  businessId: string = '64843dc5-b24c-4af2-87d5-efaf91f5d5e3'
+  businessId?: string
 ): Promise<SafeMigrationResult> {
+  const resolvedBizId = normalizeBusinessUuid(businessId || getActiveBusinessId());
   const client = getSupabaseClient();
   if (!client) {
     return {
       success: false,
-      businessId,
+      businessId: resolvedBizId,
       backupKey: '',
       localCount: 0,
       supabaseOldCount: 0,
@@ -335,20 +338,20 @@ export async function executeSafeMenuItemsMigration(
   }
 
   // 1. Inspect Local
-  const localInspection = inspectLocalMenuItems(businessId);
+  const localInspection = inspectLocalMenuItems(resolvedBizId);
 
   // 2. Fetch Supabase existing record
-  const supabaseInspection = await fetchSupabaseMenuItems(businessId);
+  const supabaseInspection = await fetchSupabaseMenuItems(resolvedBizId);
 
   // 3. Safely Merge and Backup
   const mergeAnalysis = safeMergeMenuItems(
     supabaseInspection.items,
     localInspection.items,
-    businessId
+    resolvedBizId
   );
 
   const mergedPayload = {
-    business_id: businessId,
+    business_id: resolvedBizId,
     key: 'menuItems',
     data: mergeAnalysis.mergedItems,
     updated_at: new Date().toISOString()
@@ -363,7 +366,7 @@ export async function executeSafeMenuItemsMigration(
     console.error('[Migration Error] Supabase upsert failed:', upsertError);
     return {
       success: false,
-      businessId,
+      businessId: resolvedBizId,
       backupKey: mergeAnalysis.backupKey,
       localCount: mergeAnalysis.localCount,
       supabaseOldCount: mergeAnalysis.supabaseCount,
@@ -373,21 +376,18 @@ export async function executeSafeMenuItemsMigration(
     };
   }
 
-  // 5. Update local cache with merged dataset
+  // 5. Update active in-memory store with merged dataset
   try {
-    const scopedKey = `hotel_${businessId}_menu_items_prod`;
-    const jsonStr = JSON.stringify(mergeAnalysis.mergedItems);
-    localStorage.setItem(scopedKey, jsonStr);
-    localStorage.setItem(MENU_ITEMS_BASE_KEY, jsonStr);
+    saveMenuItems(mergeAnalysis.mergedItems);
   } catch (e) {
-    console.warn('[Migration Warning] Could not update local storage cache:', e);
+    console.warn('[Migration Warning] Could not update storage cache:', e);
   }
 
   // 6. Direct Verification Query
-  const { data: verifyData, error: verifyError } = await client
+  const { data: verifyData } = await client
     .from('hotel_store')
     .select('key, business_id, data, updated_at')
-    .eq('business_id', businessId)
+    .eq('business_id', resolvedBizId)
     .eq('key', 'menuItems')
     .single();
 
@@ -397,7 +397,7 @@ export async function executeSafeMenuItemsMigration(
 
   return {
     success: true,
-    businessId,
+    businessId: resolvedBizId,
     backupKey: mergeAnalysis.backupKey,
     localCount: mergeAnalysis.localCount,
     supabaseOldCount: mergeAnalysis.supabaseCount,
@@ -412,26 +412,27 @@ export async function executeSafeMenuItemsMigration(
 /**
  * General multi-dataset verification for active business
  */
-export async function verifySupabaseBusinessData(businessId: string): Promise<{
+export async function verifySupabaseBusinessData(businessId?: string): Promise<{
   success: boolean;
   businessId: string;
   rows: { key: string; count: number; updatedAt: string; dataSample?: any }[];
   error?: string;
 }> {
+  const resolvedBizId = normalizeBusinessUuid(businessId || getActiveBusinessId());
   const client = getSupabaseClient();
   if (!client) {
-    return { success: false, businessId, rows: [], error: 'Supabase client not configured' };
+    return { success: false, businessId: resolvedBizId, rows: [], error: 'Supabase client not configured' };
   }
 
   try {
     const { data, error } = await client
       .from('hotel_store')
       .select('key, business_id, updated_at, data')
-      .eq('business_id', businessId)
+      .eq('business_id', resolvedBizId)
       .order('updated_at', { ascending: false });
 
     if (error) {
-      return { success: false, businessId, rows: [], error: error.message };
+      return { success: false, businessId: resolvedBizId, rows: [], error: error.message };
     }
 
     const rows = (data || []).map(r => ({
@@ -441,8 +442,8 @@ export async function verifySupabaseBusinessData(businessId: string): Promise<{
       dataSample: Array.isArray(r.data) ? r.data.slice(0, 2) : r.data
     }));
 
-    return { success: true, businessId, rows };
+    return { success: true, businessId: resolvedBizId, rows };
   } catch (err: any) {
-    return { success: false, businessId, rows: [], error: err.message || String(err) };
+    return { success: false, businessId: resolvedBizId, rows: [], error: err.message || String(err) };
   }
 }

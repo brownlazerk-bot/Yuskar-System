@@ -17,7 +17,7 @@ import {
 import { 
   loadBusinesses, saveBusinesses, loadSubscriptions, saveSubscriptions,
   loadSubscriptionPayments, saveSubscriptionPayments, loadAuditLogs,
-  loadUsers, saveUsers, addAuditLog
+  loadUsers, saveUsers, addAuditLog, normalizeBusinessUuid, DEFAULT_RESORT_UUID
 } from '../lib/storage';
 import { 
   generateBusinessLicense, loadStoredLicenses, revokeLicense, 
@@ -354,13 +354,13 @@ export const SuperAdminControlCenter: React.FC<SuperAdminControlCenterProps> = (
       return;
     }
 
-    const newBizId = `biz-${Date.now()}`;
+    const newBizId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : normalizeBusinessUuid(`biz-${Date.now()}`);
     const newSubId = `sub-${Date.now()}`;
 
     const newBiz: Business = {
       id: newBizId,
       name: newBizName.trim(),
-      code: `BIZ-${newBizId.slice(-4)}`,
+      code: `BIZ-${newBizId.slice(-6).toUpperCase()}`,
       category: newBizType,
       type: newBizType as any,
       ownerName: newBizOwnerName.trim(),
@@ -520,7 +520,7 @@ export const SuperAdminControlCenter: React.FC<SuperAdminControlCenterProps> = (
 
     const cleanEmail = (newUserEmail || '').trim().toLowerCase();
     const isSuperAdminRole = newUserRole === 'Super Admin';
-    const cleanBizId = isSuperAdminRole ? undefined : (newUserBizId || (businesses[0]?.id || 'biz-primary-01'));
+    const cleanBizId = isSuperAdminRole ? undefined : normalizeBusinessUuid(newUserBizId || (businesses[0]?.id || DEFAULT_RESORT_UUID));
 
     const newUserId = `usr-${Date.now()}`;
     const newUserObj: AppUser = {
