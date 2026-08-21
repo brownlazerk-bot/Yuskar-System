@@ -154,7 +154,7 @@ export function calculateDepartmentalSales(orders: Order[] = [], targetDate: str
     // Break down order items into respective departments
     if (order.items && order.items.length > 0) {
       order.items.forEach((item) => {
-        const itemTotal = item.totalPrice || ((item.price || 0) * (item.quantity || 1));
+        const itemTotal = item.totalPrice || (((item as any).price || (item as any).unitPrice || 0) * (item.quantity || 1));
         const itemQty = item.quantity || 1;
         const cat = (item.category || '').trim().toLowerCase();
         const itemName = (item.name || '').toLowerCase();

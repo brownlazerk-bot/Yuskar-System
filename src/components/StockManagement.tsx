@@ -10,6 +10,7 @@ import { MenuItem, StockAdjustmentLog, Order, Table, Waiter, AppUser, PurchaseOr
 import { formatCurrency } from '../lib/currency';
 import { calculateStockMovementsForDate, ItemStockMovement } from '../lib/stockMovement';
 import { printReportHTML } from '../lib/exporter';
+import { calculateDepartmentalSales, generateDepartmentalSummaryHTML } from '../lib/departmentalSales';
 import { KitchenRecipeManager } from './KitchenRecipeManager';
 import { IngredientYieldAnalyzer } from './IngredientYieldAnalyzer';
 
@@ -426,6 +427,7 @@ export const StockManagement: React.FC<StockManagementProps> = ({
 
     const staffName = loggedInUser?.fullName || 'Manager / Store Keeper';
     const printTime = new Date().toLocaleTimeString();
+    const deptSales = calculateDepartmentalSales(orders || [], reconciliationDate);
 
     if (printPaperFormat === '80mm') {
       // Thermal 80mm
@@ -525,6 +527,8 @@ export const StockManagement: React.FC<StockManagementProps> = ({
           ` : ''}
         </div>
 
+        ${generateDepartmentalSummaryHTML(deptSales, true)}
+
         ${printIncludeSignatures ? `
         <div style="border-top: 1px dashed #000; margin-top: 15px; padding-top: 8px; font-size: 9px;">
           <div style="margin-bottom: 15px;">Stock Keeper: ___________________</div>
@@ -603,6 +607,8 @@ export const StockManagement: React.FC<StockManagementProps> = ({
             </tr>
           </tbody>
         </table>
+
+        ${generateDepartmentalSummaryHTML(deptSales, false)}
 
         ${printIncludeSignatures ? `
         <div style="display: flex; justify-content: space-between; margin-top: 40px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
@@ -3852,6 +3858,219 @@ export const StockManagement: React.FC<StockManagementProps> = ({
                       </tbody>
                     </table>
                   </div>
+
+                  {/* DOWN THERE: DEPARTMENTAL SALES & REVENUE SUBMISSION SUMMARY */}
+                  {(() => {
+                    const deptSales = calculateDepartmentalSales(orders || [], reconciliationDate);
+                    return (
+                      <div className={`mt-8 p-6 rounded-2xl border ${
+                        darkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-slate-50 border-slate-200'
+                      }`}>
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 pb-4 border-b border-gray-200 dark:border-gray-800">
+                          <div>
+                            <div className="flex items-center space-x-2">
+                              <Building2 className="w-5 h-5 text-amber-500" />
+                              <h4 className="font-black text-base text-gray-900 dark:text-white uppercase tracking-wide">
+                                Departmental Sales & Revenue Handover Summary
+                              </h4>
+                            </div>
+                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                              Total daily sales by department for handover verification on <strong className="text-gray-900 dark:text-white">{reconciliationDate}</strong>.
+                            </p>
+                          </div>
+
+                          <div className="flex items-center space-x-2">
+                            <button
+                              onClick={() => {
+                                const html = `
+                                  <style>
+                                    @page { size: A4 portrait; margin: 10mm; }
+                                    body { font-family: Arial, sans-serif; font-size: 12px; color: #111827; margin: 0; padding: 10px; }
+                                    .header { text-align: center; border-bottom: 3px double #111827; padding-bottom: 10px; margin-bottom: 15px; }
+                                  </style>
+                                  <div class="header">
+                                    <h1 style="font-size: 22px; font-weight: 900; margin: 0; text-transform: uppercase;">SEVEN TO SEVEN</h1>
+                                    <h3 style="font-size: 14px; margin: 2px 0 8px 0; color: #4b5563;">Sky View Resort • Kamonyi-Runda</h3>
+                                    <div style="font-size: 13px; font-weight: 900; background: #111827; color: #ffffff; padding: 4px 12px; display: inline-block; border-radius: 4px; text-transform: uppercase;">
+                                      DEPARTMENTAL SALES & REVENUE SUBMISSION REPORT
+                                    </div>
+                                    <div style="font-size: 11px; margin-top: 6px; color: #6b7280;">
+                                      Date: <strong>${reconciliationDate}</strong> | Printed By: <strong>${loggedInUser?.fullName || 'Manager'}</strong>
+                                    </div>
+                                  </div>
+                                  ${generateDepartmentalSummaryHTML(deptSales, false)}
+                                  <div style="display: flex; justify-content: space-between; margin-top: 40px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+                                    <div style="text-align: center; width: 40%;">
+                                      <div style="border-bottom: 1px solid #111827; margin-bottom: 6px; height: 35px;"></div>
+                                      <strong>Chief Cashier / Store Keeper</strong>
+                                      <div style="font-size: 10px; color: #6b7280;">Sign & Date</div>
+                                    </div>
+                                    <div style="text-align: center; width: 40%;">
+                                      <div style="border-bottom: 1px solid #111827; margin-bottom: 6px; height: 35px;"></div>
+                                      <strong>General Manager / Supervisor</strong>
+                                      <div style="font-size: 10px; color: #6b7280;">Sign & Date</div>
+                                    </div>
+                                  </div>
+                                `;
+                                printReportHTML(`Departmental_Handover_${reconciliationDate}`, html);
+                              }}
+                              className="px-3.5 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-slate-950 flex items-center space-x-1.5 shadow-md shadow-amber-500/20 cursor-pointer"
+                            >
+                              <Printer className="w-4 h-4" />
+                              <span>Print Department Report</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* 5 Departmental Cards Grid */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
+                          {/* 1. Bar */}
+                          <div className={`p-4 rounded-xl border transition-all ${
+                            darkMode ? 'bg-slate-800/80 border-slate-700' : 'bg-white border-slate-200'
+                          }`}>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-[10px] font-black uppercase text-purple-600 dark:text-purple-400 tracking-wider">
+                                1. Bar & Drinks
+                              </span>
+                              <Wine className="w-4 h-4 text-purple-500" />
+                            </div>
+                            <div className="text-lg font-black text-gray-900 dark:text-white">
+                              {formatCurrency(deptSales.bar.totalSales)}
+                            </div>
+                            <div className="text-[10px] text-gray-500 dark:text-gray-400 mt-1 space-y-0.5">
+                              <div>Paid: <strong className="text-emerald-600 dark:text-emerald-400">{formatCurrency(deptSales.bar.paidSales)}</strong></div>
+                              {deptSales.bar.pendingSales > 0 && (
+                                <div>Open: <strong className="text-amber-500">{formatCurrency(deptSales.bar.pendingSales)}</strong></div>
+                              )}
+                              <div>Volume: <strong>{deptSales.bar.itemsCount} drinks</strong></div>
+                            </div>
+                          </div>
+
+                          {/* 2. Kitchen */}
+                          <div className={`p-4 rounded-xl border transition-all ${
+                            darkMode ? 'bg-slate-800/80 border-slate-700' : 'bg-white border-slate-200'
+                          }`}>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-[10px] font-black uppercase text-orange-600 dark:text-orange-400 tracking-wider">
+                                2. Kitchen & Food
+                              </span>
+                              <Utensils className="w-4 h-4 text-orange-500" />
+                            </div>
+                            <div className="text-lg font-black text-gray-900 dark:text-white">
+                              {formatCurrency(deptSales.kitchen.totalSales)}
+                            </div>
+                            <div className="text-[10px] text-gray-500 dark:text-gray-400 mt-1 space-y-0.5">
+                              <div>Paid: <strong className="text-emerald-600 dark:text-emerald-400">{formatCurrency(deptSales.kitchen.paidSales)}</strong></div>
+                              {deptSales.kitchen.pendingSales > 0 && (
+                                <div>Open: <strong className="text-amber-500">{formatCurrency(deptSales.kitchen.pendingSales)}</strong></div>
+                              )}
+                              <div>Volume: <strong>{deptSales.kitchen.itemsCount} dishes</strong></div>
+                            </div>
+                          </div>
+
+                          {/* 3. Swimming Pool */}
+                          <div className={`p-4 rounded-xl border transition-all ${
+                            darkMode ? 'bg-slate-800/80 border-slate-700' : 'bg-white border-slate-200'
+                          }`}>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-[10px] font-black uppercase text-sky-600 dark:text-sky-400 tracking-wider">
+                                3. Pool Passes
+                              </span>
+                              <Boxes className="w-4 h-4 text-sky-500" />
+                            </div>
+                            <div className="text-lg font-black text-gray-900 dark:text-white">
+                              {formatCurrency(deptSales.pool.totalSales)}
+                            </div>
+                            <div className="text-[10px] text-gray-500 dark:text-gray-400 mt-1 space-y-0.5">
+                              <div>Paid: <strong className="text-emerald-600 dark:text-emerald-400">{formatCurrency(deptSales.pool.paidSales)}</strong></div>
+                              <div>Volume: <strong>{deptSales.pool.itemsCount} entries</strong></div>
+                            </div>
+                          </div>
+
+                          {/* 4. Sauna & Steam */}
+                          <div className={`p-4 rounded-xl border transition-all ${
+                            darkMode ? 'bg-slate-800/80 border-slate-700' : 'bg-white border-slate-200'
+                          }`}>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-[10px] font-black uppercase text-rose-600 dark:text-rose-400 tracking-wider">
+                                4. Sauna & Steam
+                              </span>
+                              <Sparkles className="w-4 h-4 text-rose-500" />
+                            </div>
+                            <div className="text-lg font-black text-gray-900 dark:text-white">
+                              {formatCurrency(deptSales.sauna.totalSales)}
+                            </div>
+                            <div className="text-[10px] text-gray-500 dark:text-gray-400 mt-1 space-y-0.5">
+                              <div>Paid: <strong className="text-emerald-600 dark:text-emerald-400">{formatCurrency(deptSales.sauna.paidSales)}</strong></div>
+                              <div>Volume: <strong>{deptSales.sauna.itemsCount} sessions</strong></div>
+                            </div>
+                          </div>
+
+                          {/* 5. Rooms */}
+                          <div className={`p-4 rounded-xl border transition-all ${
+                            darkMode ? 'bg-slate-800/80 border-slate-700' : 'bg-white border-slate-200'
+                          }`}>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-[10px] font-black uppercase text-teal-600 dark:text-teal-400 tracking-wider">
+                                5. Rooms & Accom.
+                              </span>
+                              <Building2 className="w-4 h-4 text-teal-500" />
+                            </div>
+                            <div className="text-lg font-black text-gray-900 dark:text-white">
+                              {formatCurrency(deptSales.rooms.totalSales)}
+                            </div>
+                            <div className="text-[10px] text-gray-500 dark:text-gray-400 mt-1 space-y-0.5">
+                              <div>Paid: <strong className="text-emerald-600 dark:text-emerald-400">{formatCurrency(deptSales.rooms.paidSales)}</strong></div>
+                              {deptSales.rooms.pendingSales > 0 && (
+                                <div>Open: <strong className="text-amber-500">{formatCurrency(deptSales.rooms.pendingSales)}</strong></div>
+                              )}
+                              <div>Volume: <strong>{deptSales.rooms.itemsCount} bookings</strong></div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Grand Total Revenue & Submission Banner */}
+                        <div className="p-4 rounded-xl bg-linear-to-r from-slate-900 to-slate-800 text-white border border-slate-700 shadow-md">
+                          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                            <div>
+                              <span className="text-xs font-bold text-amber-400 uppercase tracking-widest block">
+                                Total Resort Revenue To Submit (All 5 Departments)
+                              </span>
+                              <div className="text-2xl sm:text-3xl font-black text-white mt-1">
+                                {formatCurrency(deptSales.totalRevenue)}
+                              </div>
+                              <div className="text-xs text-slate-300 mt-1 flex flex-wrap items-center gap-3">
+                                <span>Paid / Handover Ready: <strong className="text-emerald-400 font-black">{formatCurrency(deptSales.totalPaidRevenue)}</strong></span>
+                                {deptSales.totalPendingRevenue > 0 && (
+                                  <span>Pending / Uncollected: <strong className="text-amber-400 font-black">{formatCurrency(deptSales.totalPendingRevenue)}</strong></span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Collections Summary Pills */}
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                              <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-700/60">
+                                <span className="text-[10px] text-slate-400 block">Cash Handover</span>
+                                <span className="font-bold text-emerald-400">{formatCurrency(deptSales.paymentTotals.cash)}</span>
+                              </div>
+                              <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-700/60">
+                                <span className="text-[10px] text-slate-400 block">MoMo (Digital)</span>
+                                <span className="font-bold text-sky-400">{formatCurrency(deptSales.paymentTotals.momo)}</span>
+                              </div>
+                              <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-700/60">
+                                <span className="text-[10px] text-slate-400 block">POS Card</span>
+                                <span className="font-bold text-purple-400">{formatCurrency(deptSales.paymentTotals.card)}</span>
+                              </div>
+                              <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-700/60">
+                                <span className="text-[10px] text-slate-400 block">Credit / Debts</span>
+                                <span className="font-bold text-amber-400">{formatCurrency(deptSales.paymentTotals.credit)}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })()}
