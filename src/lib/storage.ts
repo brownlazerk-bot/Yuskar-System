@@ -293,42 +293,20 @@ export function loadMenuItems(): MenuItem[] {
 }
 
 /**
- * Cloud-First Menu Items Save
- * Persists to Supabase public.hotel_store first, verifies errors, then updates local cache.
+ * Menu Items Save: saves to scoped local storage, pushes to central server for multi-device sync, and attempts cloud sync.
  */
 export async function saveMenuItemsAsync(items: MenuItem[]): Promise<{ success: boolean; error?: any }> {
+  setStorage(KEYS.MENU_ITEMS, items);
   const activeBizId = getActiveBusinessId();
-  const serverKey = 'menuItems';
-
   if (activeBizId) {
-    const res = await saveToSupabaseStore(serverKey, items, activeBizId);
-    if (!res.success) {
-      console.error('[Cloud-First Error] Supabase write failed for menuItems:', res.error);
-      return { success: false, error: res.error };
-    }
+    const res = await saveToSupabaseStore('menuItems', items, activeBizId);
+    return res;
   }
-
-  // Update local cache and notify listeners
-  try {
-    const scopedKey = getScopedKey(KEYS.MENU_ITEMS);
-    localStorage.setItem(scopedKey, JSON.stringify(items));
-    localStorage.setItem(KEYS.MENU_ITEMS, JSON.stringify(items));
-    notifyDataChange(KEYS.MENU_ITEMS);
-    notifyDataChange(scopedKey);
-  } catch (e) {
-    console.warn('[Cache Update Warning]', e);
-  }
-
   return { success: true };
 }
 
 export function saveMenuItems(items: MenuItem[]): void {
-  // Fire cloud-first asynchronous write with validation
-  saveMenuItemsAsync(items).then(res => {
-    if (!res.success) {
-      console.error('[Cloud-First Save Error] Menu item save could not be persisted to Supabase:', res.error);
-    }
-  });
+  setStorage(KEYS.MENU_ITEMS, items);
 }
 
 export function loadTables(): Table[] {
@@ -1032,31 +1010,31 @@ export const SAAS_MONTHLY_FEE = 100000; // 100,000 RWF
 export const SAAS_MOMO_MERCHANT_NUMBER = '0726134041'; // Official fixed MTN MoMo recipient
 
 export const INITIAL_BUSINESS: Business = {
-  id: '00000000-0000-4000-8000-000000000001',
-  name: 'Kigali Horizon Lounge & Resort',
-  code: 'BIZ-1001',
-  category: 'Hotel',
-  ownerName: 'System Owner',
+  id: '64843dc5-b24c-4af2-87d5-efaf91f5d5e3',
+  name: 'SEVEN TO SEVEN Sky View Resort',
+  code: 'BIZ-1046',
+  category: 'Hotel / Resort',
+  ownerName: 'Theogene',
   phone: '+250 726 134 041',
-  email: 'yuskar@gmail.com',
+  email: 'yuskarshop@gmail.com',
   momoPaymentNumber: '0726134041',
-  address: 'KG 15 Ave, Kigali, Rwanda',
+  address: 'Kigali, Rwanda',
   currency: 'RWF',
   status: 'ACTIVE',
-  subscriptionId: '00000000-0000-4000-8000-000000000002',
+  subscriptionId: 'sub-64843dc5-b24c-4af2-87d5-efaf91f5d5e3',
   createdAt: '2026-08-14T00:00:00.000Z'
 };
 
 export const INITIAL_SUBSCRIPTION: Subscription = {
-  id: '00000000-0000-4000-8000-000000000002',
-  businessId: '00000000-0000-4000-8000-000000000001',
-  businessName: 'Kigali Horizon Lounge & Resort',
+  id: 'sub-64843dc5-b24c-4af2-87d5-efaf91f5d5e3',
+  businessId: '64843dc5-b24c-4af2-87d5-efaf91f5d5e3',
+  businessName: 'SEVEN TO SEVEN Sky View Resort',
   planName: 'Monthly SaaS Business License',
   amount: 100000,
   currency: 'RWF',
   status: 'ACTIVE',
   startDate: '2026-08-14T00:00:00.000Z',
-  expiryDate: '2026-09-14T00:00:00.000Z',
+  expiryDate: '2027-09-14T00:00:00.000Z',
   gracePeriodDays: 0,
   lastPaymentDate: '2026-08-14T00:00:00.000Z',
   paymentReference: 'MOMO-RW-20260814-INIT',
@@ -1097,10 +1075,10 @@ export function saveSubscriptions(subscriptions: Subscription[]): void {
 export function loadSubscriptionPayments(): SubscriptionPayment[] {
   const initialPayments: SubscriptionPayment[] = [
     {
-      id: '00000000-0000-4000-8000-000000000003',
-      businessId: '00000000-0000-4000-8000-000000000001',
-      businessName: 'Kigali Horizon Lounge & Resort',
-      subscriptionId: '00000000-0000-4000-8000-000000000002',
+      id: 'pay-64843dc5-b24c-4af2-87d5-efaf91f5d5e3',
+      businessId: '64843dc5-b24c-4af2-87d5-efaf91f5d5e3',
+      businessName: 'SEVEN TO SEVEN Sky View Resort',
+      subscriptionId: 'sub-64843dc5-b24c-4af2-87d5-efaf91f5d5e3',
       amount: 100000,
       currency: 'RWF',
       paymentMethod: 'MTN MoMo (Rwanda)',

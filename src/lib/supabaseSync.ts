@@ -657,40 +657,13 @@ export async function pullAllFromSupabase(targetBusinessId?: string): Promise<{ 
       const baseLocalKey = LOCAL_KEY_MAP[row.key];
       if (baseLocalKey && row.data !== undefined) {
         const scopedKey = getScopedKey(baseLocalKey, activeBizId);
-        const rawLocal = localStorage.getItem(scopedKey) || localStorage.getItem(baseLocalKey);
-        let localData: any = null;
-        try {
-          if (rawLocal) localData = JSON.parse(rawLocal);
-        } catch (e) {}
+        const incomingStr = JSON.stringify(row.data);
+        const currentScopedStr = localStorage.getItem(scopedKey);
 
-        if (Array.isArray(row.data)) {
-          const isLocalEmpty = !localData || !Array.isArray(localData) || localData.length === 0;
-          if (row.data.length === 0 && isLocalEmpty) {
-            return;
-          }
-
-          const currentLocalArray = Array.isArray(localData) ? localData : [];
-          const merged = mergeArraysByKey(currentLocalArray, row.data);
-          const mergedStr = JSON.stringify(merged);
-          const currentStr = JSON.stringify(currentLocalArray);
-
-          if (mergedStr !== currentStr && merged.length > 0) {
-            localStorage.setItem(scopedKey, mergedStr);
-            localStorage.setItem(baseLocalKey, mergedStr);
-            updatedCount++;
-          }
-
-          // If local had items Supabase was missing, push merged data to Supabase
-          if (merged.length > row.data.length) {
-            saveToSupabaseStore(row.key, merged, activeBizId);
-          }
-        } else {
-          const incomingStr = JSON.stringify(row.data);
-          if (incomingStr !== rawLocal && incomingStr !== '[]' && incomingStr !== 'null') {
-            localStorage.setItem(scopedKey, incomingStr);
-            localStorage.setItem(baseLocalKey, incomingStr);
-            updatedCount++;
-          }
+        if (incomingStr !== currentScopedStr) {
+          localStorage.setItem(scopedKey, incomingStr);
+          localStorage.setItem(baseLocalKey, incomingStr);
+          updatedCount++;
         }
       }
     });

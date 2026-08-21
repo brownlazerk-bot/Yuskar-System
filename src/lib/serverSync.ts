@@ -6,6 +6,7 @@
  */
 
 import { notifyDataChange } from './syncEngine';
+import { getActiveBusinessId, getScopedKey } from './storage';
 
 const API_BASE = '/api/sync';
 
@@ -153,11 +154,13 @@ export async function pullServerState(): Promise<boolean> {
     const { success, data } = await res.json();
     if (success && data) {
       let hasChanges = false;
+      const activeBizId = getActiveBusinessId();
 
       Object.entries(LOCAL_KEY_MAP).forEach(([serverKey, localKey]) => {
         const incoming = data[serverKey];
         if (incoming !== undefined) {
-          const rawLocal = localStorage.getItem(localKey);
+          const scopedKey = activeBizId ? getScopedKey(localKey, activeBizId) : localKey;
+          const rawLocal = localStorage.getItem(scopedKey) || localStorage.getItem(localKey);
           let localData: any = null;
           try {
             if (rawLocal) localData = JSON.parse(rawLocal);
@@ -181,7 +184,12 @@ export async function pullServerState(): Promise<boolean> {
             const incomingStr = JSON.stringify(incoming);
 
             if (mergedStr !== currentStr && merged.length > 0) {
+              if (scopedKey !== localKey) {
+                localStorage.setItem(scopedKey, mergedStr);
+              }
               localStorage.setItem(localKey, mergedStr);
+              notifyDataChange(localKey);
+              notifyDataChange(scopedKey);
               hasChanges = true;
             }
 
@@ -192,7 +200,12 @@ export async function pullServerState(): Promise<boolean> {
           } else {
             const incomingStr = JSON.stringify(incoming);
             if (incomingStr !== rawLocal && !isRecentLocalWrite && incomingStr !== '[]' && incomingStr !== 'null') {
+              if (scopedKey !== localKey) {
+                localStorage.setItem(scopedKey, incomingStr);
+              }
               localStorage.setItem(localKey, incomingStr);
+              notifyDataChange(localKey);
+              notifyDataChange(scopedKey);
               hasChanges = true;
             }
           }

@@ -25,7 +25,7 @@ import {
   loadWasteRecords, saveWasteRecords, addWasteRecord,
   loadRecipes, saveRecipes,
   loadCurrentBusiness, saveCurrentBusiness, loadSubscriptions, saveSubscriptions,
-  evaluateSubscriptionMetrics
+  evaluateSubscriptionMetrics, getActiveBusinessId
 } from './lib/storage';
 import { getCurrentUser, logoutUser, onAuthStateChange } from './lib/auth';
 import { convertRecipeQtyToStoreQty, calculateEffectiveRecipeQty } from './lib/unitConversion';
@@ -138,29 +138,50 @@ export default function App() {
 
   // Load Initial Data, Sync Engine, Online/Offline & Auto-Backup
   useEffect(() => {
-    // Restore session from Supabase/Auth
-    getCurrentUser().then(({ user, business, subscription }) => {
-      if (user) {
-        setCurrentUser(user);
-        setUserRole(user.role as any);
-      }
-      if (business) {
-        setCurrentBusiness(business);
-      }
-    });
+    // Initial pull from central database & Supabase
+    const loadDatabaseWithFeedback = async () => {
+      setIsDbLoading(true);
+      setDbSyncError(null);
+      try {
+        const { user, business } = await getCurrentUser();
+        if (user) {
+          setCurrentUser(user);
+          setUserRole(user.role as any);
+        }
+        if (business) {
+          setCurrentBusiness(business);
+        }
 
-    refreshAllStateFromStorage();
+        const activeBizId = business?.id || user?.businessId || getActiveBusinessId();
+        await pullServerState();
+        if (activeBizId) {
+          await pullAllFromSupabase(activeBizId);
+        }
+        refreshAllStateFromStorage();
+      } catch (err: any) {
+        setDbSyncError(err.message || 'Error connecting to database server');
+        refreshAllStateFromStorage();
+      } finally {
+        setIsDbLoading(false);
+      }
+    };
+
+    loadDatabaseWithFeedback();
 
     // Listen to Supabase auth state change (e.g. cross-tab signin/signout)
     const authSubscription = onAuthStateChange((event, session) => {
       if (event === 'SIGNED_OUT') {
         setCurrentUser(null);
       } else if (event === 'SIGNED_IN' && session?.user) {
-        getCurrentUser().then(({ user }) => {
+        getCurrentUser().then(({ user, business }) => {
           if (user) {
             setCurrentUser(user);
             setUserRole(user.role as any);
           }
+          if (business) {
+            setCurrentBusiness(business);
+          }
+          pullAllFromSupabase(business?.id);
         });
       }
     });
@@ -183,23 +204,6 @@ export default function App() {
 
     // Start Supabase Cloud polling if configured
     const stopSupabasePolling = startSupabaseSyncPolling(4000);
-
-    // Initial pull from central database & Supabase
-    const loadDatabaseWithFeedback = async () => {
-      setIsDbLoading(true);
-      setDbSyncError(null);
-      try {
-        await pullServerState();
-        await pullAllFromSupabase();
-        refreshAllStateFromStorage();
-      } catch (err: any) {
-        setDbSyncError(err.message || 'Error connecting to database server');
-      } finally {
-        setIsDbLoading(false);
-      }
-    };
-
-    loadDatabaseWithFeedback();
 
     // Handle online/offline network transitions
     const handleOnline = () => {
@@ -256,11 +260,17 @@ export default function App() {
     };
   }, [currentUser]);
 
-  const handleLoginSuccess = (user: AppUser) => {
+  const handleLoginSuccess = async (user: AppUser) => {
     setCurrentUser(user);
     setUserRole(user.role as any);
     const biz = loadCurrentBusiness();
     setCurrentBusiness(biz);
+    try {
+      await pullServerState();
+      await pullAllFromSupabase();
+    } catch (e) {
+      // Non-blocking sync pull
+    }
     refreshAllStateFromStorage();
   };
 
