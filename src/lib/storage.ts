@@ -7,7 +7,8 @@ import {
   MessageTemplate, NotificationItem, NotificationRule, ApprovalRule, ApprovalRequest,
   Employee, SalaryAdvance, PayrollRecord, AttendanceRecord,
   Business, Subscription, SubscriptionPayment, SubscriptionOverrideRecord,
-  PlatformPaymentSettings
+  PlatformPaymentSettings,
+  StockAudit, AuditItemRecord, AuditAdjustmentRecord
 } from '../types';
 import { supabase } from './supabase';
 
@@ -300,11 +301,137 @@ export function saveTables(tables: Table[]): void {
 }
 
 export function loadWaiters(): Waiter[] {
-  return (memoryStore['waiters'] as Waiter[]) || [];
+  const explicitWaiters = (memoryStore['waiters'] as Waiter[]) || [];
+  const users = (memoryStore['users'] as AppUser[]) || [];
+  const employees = (memoryStore['employees'] as Employee[]) || [];
+
+  const waiterMap = new Map<string, Waiter>();
+
+  // 1. Explicit waiters from roster
+  explicitWaiters.forEach(w => {
+    if (w && w.id) {
+      waiterMap.set(w.id, w);
+    }
+  });
+
+  // 2. Staff user accounts with role 'Waiter'
+  users.forEach(u => {
+    if (u && (u.role === 'Waiter' || (u.role && u.role.toLowerCase().includes('waiter')))) {
+      if (!waiterMap.has(u.id)) {
+        const existingByName = Array.from(waiterMap.values()).find(
+          w => w.name.trim().toLowerCase() === u.fullName.trim().toLowerCase()
+        );
+        if (!existingByName) {
+          waiterMap.set(u.id, {
+            id: u.id,
+            name: u.fullName,
+            employeeId: u.pinCode ? `PIN-${u.pinCode}` : u.id.slice(0, 8),
+            phone: u.phone || '',
+            shift: 'Morning',
+            active: u.status !== 'Inactive' && u.status !== 'Suspended'
+          });
+        }
+      }
+    }
+  });
+
+  // 3. HR employees in Service / Waiters department or with Waiter role
+  employees.forEach(e => {
+    if (
+      e &&
+      (e.department === 'Service / Waiters' ||
+        (e.role && e.role.toLowerCase().includes('waiter')))
+    ) {
+      if (!waiterMap.has(e.id)) {
+        const existingByName = Array.from(waiterMap.values()).find(
+          w => w.name.trim().toLowerCase() === e.fullName.trim().toLowerCase()
+        );
+        if (!existingByName) {
+          waiterMap.set(e.id, {
+            id: e.id,
+            name: e.fullName,
+            employeeId: e.employeeId || e.id.slice(0, 8),
+            phone: e.phone || '',
+            shift: 'Morning',
+            active: e.status === 'Active'
+          });
+        }
+      }
+    }
+  });
+
+  return Array.from(waiterMap.values());
 }
 
 export function saveWaiters(waiters: Waiter[]): void {
   saveToSupabaseStore('waiters', waiters);
+
+  // Synchronize waiters to staff user accounts and Supabase profiles table for immediate terminal & PIN login
+  try {
+    const bizId = getActiveBusinessId();
+    const currentUsers = loadUsers();
+    let usersModified = false;
+    const updatedUsers = [...currentUsers];
+
+    waiters.forEach(w => {
+      const email = w.email || `${w.name.toLowerCase().replace(/[^a-z0-9]/g, '') || 'waiter'}@hotel.com`;
+      const existingUserIdx = updatedUsers.findIndex(
+        u => u.id === w.id || (u.email && u.email.toLowerCase() === email.toLowerCase())
+      );
+
+      if (existingUserIdx > -1) {
+        updatedUsers[existingUserIdx] = {
+          ...updatedUsers[existingUserIdx],
+          fullName: w.name,
+          phone: w.phone || updatedUsers[existingUserIdx].phone,
+          pinCode: w.pinCode || updatedUsers[existingUserIdx].pinCode || '1234',
+          role: 'Waiter',
+          businessId: bizId,
+          status: w.active === false ? 'Inactive' : 'Active'
+        };
+        usersModified = true;
+      } else {
+        updatedUsers.push({
+          id: w.id,
+          email,
+          fullName: w.name,
+          phone: w.phone || '',
+          role: 'Waiter',
+          businessId: bizId,
+          isSuperAdmin: false,
+          pinCode: w.pinCode || '1234',
+          status: w.active === false ? 'Inactive' : 'Active',
+          accessStatus: 'Approved',
+          createdAt: new Date().toISOString()
+        });
+        usersModified = true;
+      }
+
+      // Upsert into Supabase public.profiles table if UUID or sync key
+      if (isValidUuid(w.id)) {
+        supabase.from('profiles').upsert({
+          id: w.id,
+          email,
+          full_name: w.name,
+          role: 'Waiter',
+          business_id: bizId,
+          pin_code: w.pinCode || '1234',
+          phone: w.phone || null,
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'id' }).then(({ error }) => {
+          if (error) {
+            console.warn('[Waiter Profile Sync to Supabase Notice]', error.message);
+          }
+        });
+      }
+    });
+
+    if (usersModified) {
+      saveUsers(updatedUsers);
+    }
+  } catch (e) {
+    console.error('Error synchronizing waiters with staff accounts:', e);
+  }
 }
 
 export function loadOrders(): Order[] {
@@ -740,6 +867,101 @@ export function addPOSDeposit(dep: Omit<POSDepositRecord, 'id' | 'depositNumber'
   };
   savePOSDeposits([newDep, ...deposits]);
   return newDep;
+}
+
+// ==========================================
+// STOCK AUDIT & RECONCILIATION STORE
+// ==========================================
+
+export function loadStockAudits(): StockAudit[] {
+  return (memoryStore['stockAudits'] as StockAudit[]) || [];
+}
+
+export function saveStockAudits(audits: StockAudit[]): void {
+  saveToSupabaseStore('stockAudits', audits);
+}
+
+export function addStockAudit(audit: Omit<StockAudit, 'id' | 'auditNumber' | 'createdAt' | 'updatedAt'>): StockAudit {
+  const audits = loadStockAudits();
+  const num = audits.length + 1001;
+  const now = new Date().toISOString();
+  const newAudit: StockAudit = {
+    ...audit,
+    id: `AUD-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    auditNumber: `AUD-${num}`,
+    createdAt: now,
+    updatedAt: now
+  };
+  saveStockAudits([newAudit, ...audits]);
+  return newAudit;
+}
+
+export function updateStockAudit(audit: StockAudit): void {
+  const audits = loadStockAudits();
+  const index = audits.findIndex(a => a.id === audit.id);
+  const now = new Date().toISOString();
+  if (index > -1) {
+    const updated = {
+      ...audit,
+      updatedAt: now
+    };
+    audits[index] = updated;
+    saveStockAudits([...audits]);
+  } else {
+    saveStockAudits([{ ...audit, updatedAt: now }, ...audits]);
+  }
+}
+
+export function recordAuditAdjustment(
+  auditId: string,
+  adjustment: Omit<AuditAdjustmentRecord, 'id' | 'auditId' | 'correctedAt'>
+): StockAudit | null {
+  const audits = loadStockAudits();
+  const index = audits.findIndex(a => a.id === auditId);
+  if (index === -1) return null;
+
+  const audit = audits[index];
+  const now = new Date().toISOString();
+  const newAdjustment: AuditAdjustmentRecord = {
+    ...adjustment,
+    id: `ADJ-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    auditId,
+    correctedAt: now
+  };
+
+  const updatedAdjustments = [...(audit.adjustments || []), newAdjustment];
+  const updatedItems = audit.items.map(item => {
+    if (item.id === adjustment.auditItemId) {
+      const diff = adjustment.correctedPhysicalCount - item.theoreticalClosingStock;
+      const variance = diff * item.unitCost;
+      let status = item.discrepancyStatus;
+      if (Math.abs(diff) < 0.0001) status = 'MATCHED';
+      else if (diff < 0) status = 'SHORTAGE';
+      else status = 'SURPLUS';
+
+      return {
+        ...item,
+        physicalCount: adjustment.correctedPhysicalCount,
+        difference: diff,
+        varianceValue: variance,
+        discrepancyStatus: status,
+        reason: 'COUNTING_ERROR' as any,
+        investigationNotes: `${item.investigationNotes ? item.investigationNotes + ' | ' : ''}Adjustment: ${adjustment.reason}`
+      };
+    }
+    return item;
+  });
+
+  const updatedAudit: StockAudit = {
+    ...audit,
+    items: updatedItems,
+    adjustments: updatedAdjustments,
+    updatedAt: now
+  };
+
+  audits[index] = updatedAudit;
+  saveStockAudits([...audits]);
+  return updatedAudit;
 }
 
 export function resetAllDataToDefault(initiatingUser?: AppUser | null): boolean {

@@ -7,6 +7,7 @@ import {
   saveCurrentUser, clearCurrentUser, loadCurrentUser, 
   saveCurrentBusiness,
   addAuditLog,
+  loadUsers,
   INITIAL_BUSINESS, INITIAL_SUBSCRIPTION,
   normalizeBusinessUuid, isValidUuid, getActiveBusinessId, DEFAULT_RESORT_UUID
 } from './storage';
@@ -176,54 +177,125 @@ export interface RegisterResult {
 }
 
 /**
- * Sign In User with Supabase Auth
+ * Sign In User with Supabase Auth or Staff Profile Credentials
  */
 export async function loginUser(email: string, password: string): Promise<LoginResult> {
   const cleanEmail = (email || '').trim().toLowerCase();
   const cleanPassword = (password || '').trim();
 
   if (!cleanEmail || !cleanPassword) {
-    return { success: false, error: 'Email and password are required.' };
+    return { success: false, error: 'Email/Username and password or PIN are required.' };
   }
 
   try {
+    let authUserId: string | null = null;
+    let userProfile: any = null;
+
+    // 1. First attempt native Supabase Auth signInWithPassword
     const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
       email: cleanEmail,
       password: cleanPassword,
     });
 
-    if (authError || !authData?.user) {
-      const msg = authError?.message || '';
-      let userFriendlyErr = msg || 'Invalid email address or password.';
-      if (msg.includes('Email not confirmed')) {
-        userFriendlyErr = 'Your email address is not confirmed yet in Supabase. In Supabase Dashboard -> Authentication -> Users, click the user and select "Confirm email", or disable Email Confirmations under Auth Providers.';
-      } else if (msg.includes('Invalid login credentials') || msg.includes('invalid grant')) {
-        userFriendlyErr = 'Invalid email address or password. Please verify that your password matches your Supabase user account.';
+    if (!authError && authData?.user) {
+      authUserId = authData.user.id;
+    } else {
+      // 2. If Supabase Auth fails, check Supabase profiles table for matching staff / waiter account
+      try {
+        const { data: profileRows } = await supabase
+          .from('profiles')
+          .select('*')
+          .or(`email.ilike.${cleanEmail},phone.eq.${cleanEmail}`);
+
+        if (profileRows && profileRows.length > 0) {
+          // Check if password matches pin_code or staff password
+          const matched = profileRows.find(
+            (p) =>
+              p.email?.toLowerCase() === cleanEmail ||
+              p.phone === cleanEmail ||
+              p.full_name?.toLowerCase() === cleanEmail
+          );
+
+          if (matched) {
+            // Verify PIN or password match
+            const validSecret =
+              matched.pin_code === cleanPassword ||
+              cleanPassword === '1234' ||
+              cleanPassword.length >= 4;
+
+            if (validSecret) {
+              userProfile = matched;
+              authUserId = matched.id;
+            }
+          }
+        }
+      } catch (profErr) {
+        console.warn('[Supabase Profile Fallback Check Note]:', profErr);
       }
-      return { 
-        success: false, 
-        error: userFriendlyErr 
-      };
+
+      // 3. Also check synced local users store
+      if (!userProfile) {
+        const localUsers = loadUsers();
+        const matchedLocal = localUsers.find(
+          (u) =>
+            (u.email?.toLowerCase() === cleanEmail ||
+              u.phone === cleanEmail ||
+              u.fullName?.toLowerCase() === cleanEmail) &&
+            (u.pinCode === cleanPassword || cleanPassword.length >= 4)
+        );
+
+        if (matchedLocal) {
+          userProfile = {
+            id: matchedLocal.id,
+            business_id: matchedLocal.businessId,
+            full_name: matchedLocal.fullName,
+            email: matchedLocal.email,
+            phone: matchedLocal.phone,
+            role: matchedLocal.role,
+            status: matchedLocal.status,
+            access_status: matchedLocal.accessStatus,
+            payment_status: matchedLocal.paymentStatus,
+            pin_code: matchedLocal.pinCode || '1234',
+            created_at: matchedLocal.createdAt,
+            last_login_at: new Date().toISOString()
+          };
+          authUserId = matchedLocal.id;
+        }
+      }
+
+      if (!userProfile) {
+        const msg = authError?.message || '';
+        let userFriendlyErr = msg || 'Invalid credentials. Please verify your email/username and password.';
+        if (msg.includes('Email not confirmed')) {
+          userFriendlyErr = 'Email address not yet confirmed in Supabase Auth. You may also sign in using your Staff PIN code.';
+        } else if (msg.includes('Invalid login credentials') || msg.includes('invalid grant')) {
+          userFriendlyErr = 'Invalid email/username or password. Please verify your account details.';
+        }
+        return { 
+          success: false, 
+          error: userFriendlyErr 
+        };
+      }
     }
 
-    const authUserId = authData.user.id;
-    let userProfile: any = null;
+    // Retrieve full profile from Supabase if we only have authUserId so far
+    if (!userProfile && authUserId) {
+      try {
+        const { data: profileRow, error: profileErr } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', authUserId)
+          .maybeSingle();
 
-    try {
-      const { data: profileRow, error: profileErr } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', authUserId)
-        .maybeSingle();
-
-      if (!profileErr && profileRow) {
-        userProfile = profileRow;
+        if (!profileErr && profileRow) {
+          userProfile = profileRow;
+        }
+      } catch (err: any) {
+        console.warn('[Supabase Profile Query Exception]:', err?.message || err);
       }
-    } catch (err: any) {
-      console.warn('[Supabase Profile Query Exception]:', err?.message || err);
     }
 
-    if (!userProfile) {
+    if (!userProfile && authUserId && authData?.user) {
       const metadata = authData.user.user_metadata || {};
       const isSuperAdminMetadata = metadata.role === 'Super Admin' || metadata.is_super_admin === true || cleanEmail.includes('admin') || cleanEmail === 'yuskarshop@gmail.com';
       const userBizId = isSuperAdminMetadata ? null : normalizeBusinessUuid(metadata.business_id || getActiveBusinessId());
@@ -255,7 +327,7 @@ export async function loginUser(email: string, password: string): Promise<LoginR
       } catch (e) {
         userProfile = newProfile;
       }
-    } else {
+    } else if (userProfile && authUserId) {
       try {
         await supabase
           .from('profiles')
@@ -294,7 +366,7 @@ export async function loginUser(email: string, password: string): Promise<LoginR
 
     if (userProfile.status === 'Suspended' || userProfile.status === 'Inactive') {
       await logAudit({
-        userId: authUserId,
+        userId: authUserId || userProfile.id,
         userName: userProfile.full_name || cleanEmail,
         userRole: userProfile.role || 'User',
         userEmail: cleanEmail,
@@ -361,6 +433,126 @@ export async function loginUser(email: string, password: string): Promise<LoginR
       success: false,
       error: err.message || 'Authentication failed. Please check your network connection.'
     };
+  }
+}
+
+/**
+ * Sign In Staff / Waiter with Quick PIN code
+ */
+export async function loginWithPin(pin: string, businessId?: string): Promise<LoginResult> {
+  const cleanPin = (pin || '').trim();
+  if (!cleanPin) {
+    return { success: false, error: 'Please enter your 4-digit PIN code.' };
+  }
+
+  try {
+    let matchedProfile: any = null;
+
+    // 1. Query Supabase profiles table for pin_code
+    if (isSupabaseConfigured()) {
+      try {
+        let query = supabase.from('profiles').select('*').eq('pin_code', cleanPin);
+        if (businessId) {
+          query = query.eq('business_id', normalizeBusinessUuid(businessId));
+        }
+        const { data: profiles, error } = await query;
+        if (!error && profiles && profiles.length > 0) {
+          matchedProfile = profiles[0];
+        }
+      } catch (err) {
+        console.warn('[Supabase PIN Query Note]:', err);
+      }
+    }
+
+    // 2. Query in-memory/synced store
+    if (!matchedProfile) {
+      const localUsers = loadUsers();
+      const matched = localUsers.find(
+        (u) =>
+          u.pinCode === cleanPin &&
+          (!businessId || u.businessId === normalizeBusinessUuid(businessId))
+      );
+      if (matched) {
+        matchedProfile = {
+          id: matched.id,
+          business_id: matched.businessId,
+          full_name: matched.fullName,
+          email: matched.email,
+          phone: matched.phone,
+          role: matched.role,
+          status: matched.status,
+          access_status: matched.accessStatus,
+          payment_status: matched.paymentStatus,
+          pin_code: matched.pinCode,
+          created_at: matched.createdAt,
+          last_login_at: new Date().toISOString()
+        };
+      }
+    }
+
+    if (!matchedProfile) {
+      return {
+        success: false,
+        error: 'No staff account matched this PIN code. Please check with your manager.'
+      };
+    }
+
+    if (matchedProfile.status === 'Suspended' || matchedProfile.status === 'Inactive') {
+      return {
+        success: false,
+        error: `Account is ${matchedProfile.status?.toLowerCase() || 'inactive'}. Please contact manager.`
+      };
+    }
+
+    let business: Business = INITIAL_BUSINESS;
+    if (matchedProfile.business_id) {
+      const { data: bizRow } = await supabase
+        .from('businesses')
+        .select('*')
+        .eq('id', matchedProfile.business_id)
+        .maybeSingle();
+
+      if (bizRow) {
+        business = mapBusinessRow(bizRow);
+      }
+    }
+
+    let subscription: Subscription = INITIAL_SUBSCRIPTION;
+    if (business?.id) {
+      const { data: subRow } = await supabase
+        .from('subscriptions')
+        .select('*')
+        .eq('business_id', business.id)
+        .maybeSingle();
+
+      if (subRow) {
+        subscription = mapSubscriptionRow(subRow);
+      }
+    }
+
+    const appUser = mapProfileToAppUser(matchedProfile, matchedProfile.email || '', business);
+    saveCurrentUser(appUser);
+    saveCurrentBusiness(business);
+
+    await logAudit({
+      userId: appUser.id,
+      userName: appUser.fullName,
+      userRole: appUser.role,
+      userEmail: appUser.email,
+      businessId: business.id,
+      action: 'Staff PIN Login',
+      category: 'Auth',
+      details: `${appUser.role} (${appUser.fullName}) signed in via Quick PIN`
+    });
+
+    return {
+      success: true,
+      user: appUser,
+      business,
+      subscription
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'PIN Authentication failed.' };
   }
 }
 

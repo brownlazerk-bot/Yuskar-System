@@ -25,7 +25,7 @@ import {
   loadWasteRecords, saveWasteRecords, addWasteRecord,
   loadRecipes, saveRecipes,
   loadCurrentBusiness, saveCurrentBusiness, loadSubscriptions, saveSubscriptions,
-  evaluateSubscriptionMetrics, getActiveBusinessId
+  evaluateSubscriptionMetrics, getActiveBusinessId, setActiveBusinessId
 } from './lib/storage';
 import { getCurrentUser, logoutUser, onAuthStateChange } from './lib/auth';
 import { convertRecipeQtyToStoreQty, calculateEffectiveRecipeQty } from './lib/unitConversion';
@@ -49,6 +49,7 @@ import { LoginView } from './components/LoginView';
 import { UserManagement } from './components/UserManagement';
 import { AuditLogView } from './components/AuditLogView';
 import { ProductServiceManager } from './components/ProductServiceManager';
+import { StockAuditModule } from './components/audit/StockAuditModule';
 import { IngredientsModule } from './components/IngredientsModule';
 import { RecipeModule } from './components/RecipeModule';
 import { MenuModule } from './components/MenuModule';
@@ -68,7 +69,7 @@ import { SubscriptionReminderBanner } from './components/SubscriptionReminderBan
 import { loadUsers, fetchAllBusinessDataFromSupabase, subscribeToDataChanges } from './lib/storage';
 import { createDailyBackup } from './lib/syncEngine';
 import { startSupabaseSyncPolling } from './lib/supabaseSync';
-import { WifiOff, RefreshCw, Bell, Database, AlertCircle, CheckCircle } from 'lucide-react';
+import { WifiOff, RefreshCw, Bell, Database, AlertCircle, CheckCircle, Shield, ArrowLeft } from 'lucide-react';
 import { formatCurrency } from './lib/currency';
 
 import { Language } from './lib/translations';
@@ -103,6 +104,8 @@ export default function App() {
   const [wasteRecords, setWasteRecords] = useState<KitchenWasteRecord[]>([]);
   const [currentBusiness, setCurrentBusiness] = useState<Business>(() => loadCurrentBusiness());
   const [subscriptionsList, setSubscriptionsList] = useState<Subscription[]>(() => loadSubscriptions());
+  const [portalMode, setPortalMode] = useState<'business' | 'super_admin'>('business');
+  const [superAdminViewingBiz, setSuperAdminViewingBiz] = useState<Business | null>(null);
 
   // Receipt & Notification Drawer State
   const [receiptOrder, setReceiptOrder] = useState<Order | null>(null);
@@ -145,6 +148,15 @@ export default function App() {
         if (user) {
           setCurrentUser(user);
           setUserRole(user.role as any);
+          const isSuper = Boolean(user.isSuperAdmin || user.role === 'Super Admin');
+          if (isSuper) {
+            const isExplicitBiz = window.location.hash.includes('business');
+            if (!isExplicitBiz) {
+              setPortalMode('super_admin');
+            }
+          } else {
+            setPortalMode('business');
+          }
         }
         if (business) {
           setCurrentBusiness(business);
@@ -257,6 +269,24 @@ export default function App() {
   const handleLoginSuccess = async (user: AppUser) => {
     setCurrentUser(user);
     setUserRole(user.role as any);
+    const isSuper = Boolean(user.isSuperAdmin || user.role === 'Super Admin');
+    if (isSuper) {
+      setPortalMode('super_admin');
+      setSuperAdminViewingBiz(null);
+      addAuditLog({
+        userId: user.id,
+        userName: user.fullName,
+        userRole: user.role,
+        userEmail: user.email,
+        action: 'SUPER_ADMIN_LOGIN',
+        category: 'Auth',
+        details: `Super Admin ${user.fullName} logged into Super Admin Portal`
+      });
+    } else {
+      setPortalMode('business');
+      setActiveTab('dashboard');
+      setSuperAdminViewingBiz(null);
+    }
     const biz = loadCurrentBusiness();
     setCurrentBusiness(biz);
     try {
@@ -271,6 +301,55 @@ export default function App() {
   const handleLogout = async () => {
     await logoutUser();
     setCurrentUser(null);
+    setPortalMode('business');
+    setSuperAdminViewingBiz(null);
+  };
+
+  // Super Admin view mode transitions
+  const handleSuperAdminOpenBusiness = async (biz: Business) => {
+    const isSuper = Boolean(currentUser?.isSuperAdmin || currentUser?.role === 'Super Admin');
+    if (!isSuper) return;
+
+    setIsDbLoading(true);
+    try {
+      setActiveBusinessId(biz.id);
+      setCurrentBusiness(biz);
+      await fetchAllBusinessDataFromSupabase(biz.id);
+      refreshAllStateFromStorage();
+      setSuperAdminViewingBiz(biz);
+      setPortalMode('business');
+      setActiveTab('dashboard');
+
+      addAuditLog({
+        userId: currentUser?.id || 'sa-01',
+        userName: currentUser?.fullName || 'Super Admin',
+        userRole: 'Super Admin',
+        userEmail: currentUser?.email || '',
+        action: 'ADMIN_VIEW_MODE_STARTED',
+        category: 'System',
+        details: `Super Admin entered administrative view mode for business: ${biz.name} (ID: ${biz.id})`
+      });
+    } catch (err: any) {
+      console.error('Error opening business in admin view:', err);
+    } finally {
+      setIsDbLoading(false);
+    }
+  };
+
+  const handleSuperAdminReturnToPortal = () => {
+    if (superAdminViewingBiz) {
+      addAuditLog({
+        userId: currentUser?.id || 'sa-01',
+        userName: currentUser?.fullName || 'Super Admin',
+        userRole: 'Super Admin',
+        userEmail: currentUser?.email || '',
+        action: 'ADMIN_VIEW_MODE_ENDED',
+        category: 'System',
+        details: `Super Admin returned to Super Admin Portal from business: ${superAdminViewingBiz.name}`
+      });
+    }
+    setSuperAdminViewingBiz(null);
+    setPortalMode('super_admin');
   };
 
   // Sync to Storage on State Changes
@@ -2139,6 +2218,19 @@ export default function App() {
   // Super Admin check for payment gate bypass
   const isSuperAdminUser = Boolean(currentUser.isSuperAdmin || currentUser.role === 'Super Admin');
 
+  // Super Admin Portal Entry Point
+  if (portalMode === 'super_admin' && isSuperAdminUser) {
+    return (
+      <SuperAdminControlCenter
+        currentUser={currentUser}
+        onLogout={handleLogout}
+        darkMode={darkMode}
+        onToggleDarkMode={() => setDarkMode(!darkMode)}
+        onOpenBusiness={handleSuperAdminOpenBusiness}
+      />
+    );
+  }
+
   // Active Business & Subscription metrics
   const activeSub = subscriptionsList.find(s => s.businessId === currentBusiness?.id) || subscriptionsList[0];
   const subMetrics = evaluateSubscriptionMetrics(activeSub);
@@ -2190,6 +2282,38 @@ export default function App() {
     <div className={`min-h-screen transition-colors duration-200 font-sans ${
       darkMode ? 'bg-slate-950 text-slate-100' : 'bg-slate-100 text-slate-900'
     }`}>
+
+      {/* Super Admin Administrative View Mode Banner */}
+      {isSuperAdminUser && (
+        <div className="bg-amber-500 text-slate-950 px-4 py-2.5 shadow-lg sticky top-0 z-50 flex items-center justify-between border-b border-amber-600">
+          <div className="flex items-center gap-3">
+            <div className="p-1.5 rounded-lg bg-slate-950 text-amber-400 font-bold">
+              <Shield className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black uppercase tracking-wider bg-slate-950 text-amber-400 px-2 py-0.5 rounded-full">
+                  Super Admin Administrative View
+                </span>
+                <span className="text-xs font-black">
+                  Viewing Business: <u>{currentBusiness?.name || 'Unknown Business'}</u>
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-900 font-medium">
+                ID: <code className="font-mono text-[10px] bg-amber-400/80 px-1 rounded">{currentBusiness?.id}</code> • You are managing this business directly.
+              </p>
+            </div>
+          </div>
+          <button
+            id="btn-return-super-admin"
+            onClick={handleSuperAdminReturnToPortal}
+            className="px-3.5 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-900 text-amber-400 text-xs font-black flex items-center gap-1.5 shadow-md transition cursor-pointer"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span>Return to Super Admin Portal</span>
+          </button>
+        </div>
+      )}
 
       {/* Database Sync Status Banner */}
       {isDbLoading ? (
@@ -2493,6 +2617,14 @@ export default function App() {
           />
         )}
 
+        {activeTab === 'stock_audit' && (
+          <StockAuditModule
+            currentUser={currentUser}
+            userRole={userRole}
+            darkMode={darkMode}
+          />
+        )}
+
         {activeTab === 'report' && (
           <DailyReportView
             orders={orders}
@@ -2547,15 +2679,6 @@ export default function App() {
           <PaymentsAndSubscriptionView
             currentUser={currentUser}
             darkMode={darkMode}
-          />
-        )}
-
-        {activeTab === 'saas_admin' && isSuperAdminUser && (
-          <SuperAdminControlCenter
-            currentUser={currentUser}
-            onLogout={handleLogout}
-            darkMode={darkMode}
-            onToggleDarkMode={() => setDarkMode(!darkMode)}
           />
         )}
 

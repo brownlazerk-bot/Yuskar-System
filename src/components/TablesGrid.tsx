@@ -887,8 +887,9 @@ export const TablesGrid: React.FC<TablesGridProps> = ({
                   onChange={(e) => setModalWaiterId(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl font-bold border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800"
                 >
+                  <option value="">-- No Assigned Waiter --</option>
                   {waiters.map(w => (
-                    <option key={w.id} value={w.id}>{w.name} ({w.shift})</option>
+                    <option key={w.id} value={w.id}>{w.name} {w.shift ? `(${w.shift})` : ''}</option>
                   ))}
                 </select>
               </div>

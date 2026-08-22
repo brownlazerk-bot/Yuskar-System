@@ -3,10 +3,11 @@ import {
   LayoutDashboard, Receipt, ShoppingCart, UtensilsCrossed, ChefHat, 
   Waves, PackageCheck, ReceiptText, FileBarChart, Settings, Users, ShieldCheck,
   Package, Boxes, Utensils, BookOpen, MessageSquare, Bell, CheckSquare,
-  UserCheck, Banknote, Briefcase, CreditCard, KeyRound, Globe
+  UserCheck, Banknote, Briefcase, CreditCard, KeyRound, Globe, ClipboardCheck
 } from 'lucide-react';
-import { UserRole } from '../types';
+import { Business, UserRole } from '../types';
 import { Language, getTranslation } from '../lib/translations';
+import { isModuleEnabled, getBusinessTypeConfig } from '../lib/businessConfig';
 
 export type TabType = 
   | 'dashboard' 
@@ -20,6 +21,7 @@ export type TabType =
   | 'menu_management'
   | 'pool_sauna' 
   | 'stock' 
+  | 'stock_audit'
   | 'shifts'
   | 'report' 
   | 'hr_payroll'
@@ -40,6 +42,7 @@ interface NavigationProps {
   unpaidOrdersCount?: number;
   lowStockCount: number;
   userRole: UserRole;
+  business?: Business | null;
   darkMode: boolean;
   language?: Language;
 }
@@ -51,55 +54,62 @@ export const Navigation: React.FC<NavigationProps> = ({
   unpaidOrdersCount = 0,
   lowStockCount,
   userRole,
+  business,
   darkMode,
   language = 'rw'
 }) => {
   const isManagerOrAdmin = userRole === 'Manager' || userRole === 'Super Admin' || userRole === 'Admin' || userRole === 'Accountant';
   const isSuperAdmin = userRole === 'Super Admin';
   const t = getTranslation(language);
+  const config = getBusinessTypeConfig(business);
+
+  const isRetailOrTrade = config.dashboardArchetype === 'retail_fashion' || config.dashboardArchetype === 'trade_materials' || config.dashboardArchetype === 'grocery_fmcg';
 
   const navItems = [
-    { id: 'dashboard' as TabType, label: t.dashboard, icon: LayoutDashboard },
+    { id: 'dashboard' as TabType, moduleKey: 'dashboard' as const, label: t.dashboard, icon: LayoutDashboard },
     { 
       id: 'order_center' as TabType, 
-      label: t.orderCenter, 
+      moduleKey: 'order_center' as const,
+      label: isRetailOrTrade ? 'Sales & Invoices' : t.orderCenter, 
       icon: Receipt,
       badge: unpaidOrdersCount > 0 ? unpaidOrdersCount : null,
       badgeColor: 'bg-amber-500 text-white'
     },
-    { id: 'accountant_control' as TabType, label: 'Accountant Control', icon: Briefcase, managerOnly: true },
-    { id: 'pos' as TabType, label: t.pos, icon: ShoppingCart },
-    { id: 'tables' as TabType, label: t.tables, icon: UtensilsCrossed },
+    { id: 'accountant_control' as TabType, moduleKey: 'accountant_control' as const, label: 'Accountant Control', icon: Briefcase, managerOnly: true },
+    { id: 'pos' as TabType, moduleKey: 'pos' as const, label: isRetailOrTrade ? 'Cashier POS' : t.pos, icon: ShoppingCart },
+    { id: 'tables' as TabType, moduleKey: 'tables' as const, label: t.tables, icon: UtensilsCrossed },
     { 
       id: 'kitchen' as TabType, 
+      moduleKey: 'kitchen' as const,
       label: t.kitchen, 
       icon: ChefHat, 
       badge: pendingKitchenCount > 0 ? pendingKitchenCount : null,
       badgeColor: 'bg-rose-500 text-white'
     },
-    { id: 'ingredients' as TabType, label: 'Ingredients', icon: Boxes },
-    { id: 'recipe_management' as TabType, label: 'Recipes', icon: Utensils },
-    { id: 'menu_management' as TabType, label: 'Menu', icon: BookOpen },
-    { id: 'pool_sauna' as TabType, label: t.poolSauna, icon: Waves },
+    { id: 'ingredients' as TabType, moduleKey: 'ingredients' as const, label: 'Ingredients', icon: Boxes },
+    { id: 'recipe_management' as TabType, moduleKey: 'recipes' as const, label: 'Recipes', icon: Utensils },
+    { id: 'menu_management' as TabType, moduleKey: 'menu' as const, label: isRetailOrTrade ? 'Catalog & Products' : 'Menu', icon: BookOpen },
+    { id: 'pool_sauna' as TabType, moduleKey: 'pool_sauna' as const, label: t.poolSauna, icon: Waves },
     { 
       id: 'stock' as TabType, 
-      label: t.barStock, 
+      moduleKey: 'inventory' as const,
+      label: isRetailOrTrade ? 'Stock Inventory' : t.barStock, 
       icon: PackageCheck,
       badge: lowStockCount > 0 ? lowStockCount : null,
       badgeColor: 'bg-amber-500 text-white'
     },
-    { id: 'shifts' as TabType, label: t.shifts, icon: ReceiptText },
-    { id: 'report' as TabType, label: t.dailyReport, icon: FileBarChart },
-    { id: 'hr_payroll' as TabType, label: 'HR & Payroll', icon: UserCheck, managerOnly: true },
-    { id: 'whatsapp_reports' as TabType, label: 'WhatsApp Automation', icon: MessageSquare, managerOnly: true },
-    { id: 'notifications' as TabType, label: 'Notifications', icon: Bell },
-    { id: 'approvals' as TabType, label: 'Approvals Engine', icon: CheckSquare },
-    { id: 'subscriptions' as TabType, label: 'Payments & Subscription', icon: CreditCard, managerOnly: true },
-    { id: 'saas_admin' as TabType, label: 'SaaS Super Admin', icon: KeyRound, superAdminOnly: true },
-    { id: 'products_services' as TabType, label: t.productsServices, icon: Package, managerOnly: true },
-    { id: 'users' as TabType, label: t.userAdmin, icon: Users, managerOnly: true },
-    { id: 'audit_logs' as TabType, label: t.auditLogs, icon: ShieldCheck, managerOnly: true },
-    { id: 'settings' as TabType, label: t.settings, icon: Settings, managerOnly: true },
+    { id: 'stock_audit' as TabType, moduleKey: 'stock_audit' as const, label: 'Stock Audit', icon: ClipboardCheck, managerOnly: true },
+    { id: 'shifts' as TabType, moduleKey: 'shifts' as const, label: t.shifts, icon: ReceiptText },
+    { id: 'report' as TabType, moduleKey: 'reports' as const, label: t.dailyReport, icon: FileBarChart },
+    { id: 'hr_payroll' as TabType, moduleKey: 'hr_payroll' as const, label: 'HR & Payroll', icon: UserCheck, managerOnly: true },
+    { id: 'whatsapp_reports' as TabType, moduleKey: 'whatsapp_reports' as const, label: 'WhatsApp Automation', icon: MessageSquare, managerOnly: true },
+    { id: 'notifications' as TabType, moduleKey: 'notifications' as const, label: 'Notifications', icon: Bell },
+    { id: 'approvals' as TabType, moduleKey: 'approvals' as const, label: 'Approvals Engine', icon: CheckSquare },
+    { id: 'subscriptions' as TabType, moduleKey: 'subscriptions' as const, label: 'Payments & Subscription', icon: CreditCard, managerOnly: true },
+    { id: 'products_services' as TabType, moduleKey: 'products' as const, label: t.productsServices, icon: Package, managerOnly: true },
+    { id: 'users' as TabType, moduleKey: 'users' as const, label: t.userAdmin, icon: Users, managerOnly: true },
+    { id: 'audit_logs' as TabType, moduleKey: 'audit_logs' as const, label: t.auditLogs, icon: ShieldCheck, managerOnly: true },
+    { id: 'settings' as TabType, moduleKey: 'settings' as const, label: t.settings, icon: Settings, managerOnly: true },
   ];
 
   return (
@@ -111,8 +121,8 @@ export const Navigation: React.FC<NavigationProps> = ({
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex space-x-1 sm:space-x-2 overflow-x-auto no-scrollbar py-2">
           {navItems.map((item) => {
-            if (item.superAdminOnly && !isSuperAdmin) return null;
             if (item.managerOnly && !isManagerOrAdmin) return null;
+            if (item.moduleKey && !isModuleEnabled(business, item.moduleKey)) return null;
             const Icon = item.icon;
             const isActive = activeTab === item.id;
 

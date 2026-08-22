@@ -31,13 +31,15 @@ interface SuperAdminControlCenterProps {
   onLogout: () => void;
   darkMode: boolean;
   onToggleDarkMode: () => void;
+  onOpenBusiness?: (business: Business) => void;
 }
 
 export const SuperAdminControlCenter: React.FC<SuperAdminControlCenterProps> = ({
   currentUser,
   onLogout,
   darkMode,
-  onToggleDarkMode
+  onToggleDarkMode,
+  onOpenBusiness
 }) => {
   // Navigation Tabs: 8 required domains
   const [activeTab, setActiveTab] = useState<
@@ -1454,10 +1456,22 @@ export const SuperAdminControlCenter: React.FC<SuperAdminControlCenterProps> = (
                           </td>
                           <td className="py-3.5 px-4 text-right">
                             <div className="flex items-center justify-end gap-1.5">
+                              {onOpenBusiness && (
+                                <button
+                                  id={`btn-open-biz-${biz.id}`}
+                                  onClick={() => onOpenBusiness(biz)}
+                                  className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-[11px] flex items-center gap-1 transition-all shadow-sm cursor-pointer"
+                                  title="Open Business Dashboard in Administrative Mode"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                  <span>Open Dashboard</span>
+                                </button>
+                              )}
+
                               {biz.status !== 'ACTIVE' ? (
                                 <button
                                   onClick={() => handleUpdateBusinessStatus(biz, 'ACTIVE')}
-                                  className="px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold text-[11px] transition-all"
+                                  className="px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold text-[11px] transition-all cursor-pointer"
                                   title="Activate Business"
                                 >
                                   Activate
@@ -1465,7 +1479,7 @@ export const SuperAdminControlCenter: React.FC<SuperAdminControlCenterProps> = (
                               ) : (
                                 <button
                                   onClick={() => handleUpdateBusinessStatus(biz, 'SUSPENDED')}
-                                  className="px-2.5 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 font-bold text-[11px] transition-all"
+                                  className="px-2.5 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 font-bold text-[11px] transition-all cursor-pointer"
                                   title="Suspend Business"
                                 >
                                   Suspend
@@ -1477,7 +1491,7 @@ export const SuperAdminControlCenter: React.FC<SuperAdminControlCenterProps> = (
                                   setSelectedBiz(biz);
                                   setIsEditBizModalOpen(true);
                                 }}
-                                className={`p-1.5 rounded-lg border transition-colors ${
+                                className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${
                                   darkMode ? 'bg-slate-800 border-slate-700 hover:bg-slate-700' : 'bg-slate-100 border-slate-200 hover:bg-slate-200'
                                 }`}
                                 title="Edit Business Info"

@@ -107,18 +107,117 @@ export interface SubscriptionLicense {
   notes?: string;
 }
 
+export type BusinessType = 
+  | 'HOTEL'
+  | 'RESTAURANT'
+  | 'COFFEE_SHOP'
+  | 'BAR'
+  | 'GUEST_HOUSE'
+  | 'LODGE'
+  | 'SUPERMARKET'
+  | 'GENERAL_SHOP'
+  | 'CLOTHING_SHOP'
+  | 'SHOE_SHOP'
+  | 'ELECTRONICS_SHOP'
+  | 'CONSTRUCTION_MATERIALS_SHOP'
+  | 'HARDWARE_SHOP'
+  | 'ALIMENTATION_GROCERY'
+  | 'PHARMACY'
+  | 'BEAUTY_COSMETICS'
+  | 'SALON_BARBERSHOP'
+  | 'LAUNDRY'
+  | 'CAR_RENTAL'
+  | 'GARAGE_AUTO'
+  | 'WHOLESALE'
+  | 'RETAIL'
+  | 'OTHER';
+
+export type BusinessModuleKey = 
+  | 'dashboard'
+  | 'pos'
+  | 'order_center'
+  | 'products'
+  | 'product_variants'
+  | 'inventory'
+  | 'barcode'
+  | 'ingredients'
+  | 'recipes'
+  | 'menu'
+  | 'tables'
+  | 'kitchen'
+  | 'rooms_hotel'
+  | 'pool_sauna'
+  | 'customers'
+  | 'suppliers'
+  | 'purchases'
+  | 'expenses'
+  | 'accountant_control'
+  | 'reports'
+  | 'stock_audit'
+  | 'shifts'
+  | 'hr_payroll'
+  | 'whatsapp_reports'
+  | 'notifications'
+  | 'approvals'
+  | 'subscriptions'
+  | 'users'
+  | 'audit_logs'
+  | 'settings';
+
+export interface ProductVariant {
+  id: string; // UUID
+  productId: string; // UUID
+  sku?: string;
+  barcode?: string;
+  size?: string; // e.g. "S", "M", "L", "XL", "XXL", "38", "40", "42"
+  color?: string; // e.g. "Black", "Navy Blue", "White", "Red", "Olive Green"
+  material?: string; // e.g. "Cotton", "Denim", "Leather", "Silk", "Steel"
+  style?: string; // e.g. "Slim Fit", "Regular", "V-Neck", "Heavy Duty"
+  additionalPrice?: number; // Optional price delta (or 0)
+  price?: number; // Variant specific selling price
+  costPrice?: number; // Variant cost price
+  stockQuantity: number; // Independent inventory
+  minStockAlert?: number;
+}
+
+export interface BusinessMembership {
+  id: string; // UUID
+  businessId: string; // UUID
+  userId: string; // UUID
+  role: SystemRole | 'Owner' | 'Manager' | 'Cashier' | 'Storekeeper' | 'Accountant' | 'Salesperson' | string;
+  status: 'Active' | 'Inactive' | 'Pending' | 'Suspended';
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface BusinessModuleSetting {
+  id?: string;
+  businessId: string;
+  moduleKey: BusinessModuleKey;
+  enabled: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface Business {
-  id: string; // e.g. "biz-01"
-  name: string; // e.g. "Kigali Horizon Lounge & Resort"
+  id: string; // PostgreSQL UUID e.g. "64843dc5-b24c-4af2-87d5-efaf91f5d5e3"
+  name: string; // e.g. "SEVEN TO SEVEN Sky View Resort" or "YusKar Fashion Store"
+  businessType?: BusinessType | string;
+  business_type?: BusinessType | string;
   code?: string;
   category?: 'Hotel' | 'Restaurant' | 'Bar / Lounge' | 'Cafe' | 'Resort' | 'Nightclub' | 'Multi-Service Hospitality' | string;
   type?: string;
+  description?: string;
   ownerName: string;
+  owner_name?: string;
   phone?: string;
   email?: string;
   ownerEmail?: string;
+  owner_email?: string;
   ownerPhone?: string;
+  owner_phone?: string;
   momoPaymentNumber?: string;
+  momo_payment_number?: string;
   address?: string;
   taxNumber?: string;
   logoUrl?: string;
@@ -126,8 +225,13 @@ export interface Business {
   status: SaaSSubscriptionStatus;
   subscriptionId?: string;
   bonusDays?: number;
+  enabledModules?: BusinessModuleKey[];
+  customCategories?: string[];
+  customUnits?: string[];
   createdAt: string;
+  created_at?: string;
   updatedAt?: string;
+  updated_at?: string;
 }
 
 export interface SubscriptionPaymentRecord {
@@ -398,8 +502,10 @@ export interface MenuItem {
   businessId?: string;
   code?: string;
   barcode?: string;
+  sku?: string;
+  brand?: string;
   name: string;
-  category: Category;
+  category: Category | string;
   productSection?: ProductSection;
   foodCategory?: string;
   price: number; // Selling price (RWF)
@@ -408,7 +514,7 @@ export interface MenuItem {
   kitchenDepartment?: string; // e.g. 'Hot Kitchen', 'Grill', 'Pastry', 'Bar'
   stockQuantity: number; // Bar Stock (active selling) or Kitchen Stock
   mainStockQuantity?: number; // Main Beverage Stock (warehouse / store)
-  unit: string; // e.g. 'Bottle', 'Glass', 'Serving', 'Ticket', 'Cup', 'Shot', 'Portion', 'Pass', 'Hour', 'Service'
+  unit: string; // e.g. 'Bottle', 'Glass', 'Serving', 'Ticket', 'Cup', 'Shot', 'Portion', 'Pass', 'Hour', 'Service', 'Piece', 'Kg', 'Meter', 'Box', 'Pair'
   status: ItemStatus;
   active?: boolean;
   image?: string;
@@ -421,6 +527,13 @@ export interface MenuItem {
   recipeId?: string; // Foreign key linking to standalone Recipe
   recipe?: RecipeIngredient[];
   accompanyingDrinks?: AccompanyingDrink[];
+  // Retail & Fashion Variants
+  hasVariants?: boolean;
+  variants?: ProductVariant[];
+  supplier?: string;
+  supplierId?: string;
+  expiryDate?: string; // YYYY-MM-DD
+  batchNumber?: string;
 }
 
 export type TableStatus = 'Available' | 'Occupied' | 'Reserved' | 'Cleaning' | 'Out of Service';
@@ -449,6 +562,9 @@ export interface Waiter {
   name: string;
   employeeId: string;
   phone: string;
+  email?: string;
+  pinCode?: string;
+  password?: string;
   shift: 'Morning' | 'Afternoon' | 'Evening' | 'Night';
   active: boolean;
 }
@@ -1214,4 +1330,174 @@ export interface AttendanceRecord {
   overtimeHours: number;
   notes?: string;
 }
+
+// ==========================================
+// STOCK AUDIT & RECONCILIATION TYPES
+// ==========================================
+
+export type AuditStatus = 
+  | 'DRAFT' 
+  | 'IN_PROGRESS' 
+  | 'COUNT_COMPLETED' 
+  | 'UNDER_REVIEW' 
+  | 'INVESTIGATION' 
+  | 'RESOLVED' 
+  | 'APPROVED' 
+  | 'CLOSED' 
+  | 'CANCELLED';
+
+export type DiscrepancyStatus = 
+  | 'MATCHED' 
+  | 'SHORTAGE' 
+  | 'SURPLUS' 
+  | 'PENDING_INVESTIGATION' 
+  | 'EXPLAINED' 
+  | 'APPROVED' 
+  | 'REJECTED' 
+  | 'RESOLVED';
+
+export type DiscrepancyReason = 
+  | 'WASTE' 
+  | 'DAMAGED' 
+  | 'SPOILAGE' 
+  | 'UNRECORDED_SALE' 
+  | 'COUNTING_ERROR' 
+  | 'TRANSFER_ERROR' 
+  | 'SYSTEM_ERROR' 
+  | 'THEFT_SUSPECTED' 
+  | 'OTHER';
+
+export type AuditScopeType = 'ENTIRE_BUSINESS' | 'DEPARTMENT' | 'CATEGORY' | 'SPECIFIC_ITEMS';
+export type AuditFrequency = 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'QUARTERLY' | 'ADHOC';
+
+export interface AuditItemRecord {
+  id: string; // e.g. "audit-item-1"
+  itemId: string; // ID from MenuItem or KitchenIngredient
+  itemType: 'BEVERAGE_MENU' | 'KITCHEN_INGREDIENT' | 'OTHER_SERVICE';
+  itemCode?: string;
+  name: string;
+  category: string;
+  department: string;
+  unit: string;
+  unitCost: number;
+  
+  // Historical snapshot at start of audit
+  openingStock: number;
+  openingStockTimestamp?: string;
+  openingStockSource?: string;
+  
+  // Stock Movements during period
+  stockReceived: number;       // Purchases, receipts, transfers in
+  transfersIn: number;
+  adjustmentsIn: number;
+  
+  stockSoldOrUsed: number;     // Direct sales, recipe consumption
+  transfersOut: number;
+  wasteQuantity: number;
+  damagedQuantity: number;
+  adjustmentsOut: number;
+  
+  // Calculations
+  theoreticalClosingStock: number; // Opening + In - Out
+  physicalCount: number | null;     // Entered by auditor (null if not counted yet)
+  difference: number;              // physicalCount - theoreticalClosingStock (or 0 if null)
+  
+  // Financial impact
+  varianceValue: number;           // difference * unitCost
+  
+  // Status & Investigation
+  discrepancyStatus: DiscrepancyStatus;
+  reason?: DiscrepancyReason;
+  investigationNotes?: string;
+  resolutionNotes?: string;
+  evidenceAttachments?: string[];
+  
+  countedAt?: string;
+  countedBy?: string;
+  reviewedBy?: string;
+}
+
+export interface AuditAdjustmentRecord {
+  id: string;
+  auditId: string;
+  auditItemId: string;
+  itemName: string;
+  originalPhysicalCount: number;
+  correctedPhysicalCount: number;
+  originalDifference: number;
+  correctedDifference: number;
+  reason: string;
+  correctedBy: string;
+  correctedByRole: string;
+  correctedAt: string;
+}
+
+export interface StockAudit {
+  id: string; // e.g. "AUD-2026-001"
+  businessId: string;
+  auditNumber: string; // e.g. "AUD-1001"
+  name: string; // e.g. "End of Day Bar Audit"
+  auditDate: string; // YYYY-MM-DD
+  startDate: string; // ISO string
+  endDate: string; // ISO string
+  frequency: AuditFrequency;
+  scopeType: AuditScopeType;
+  department: string; // e.g. 'Bar / Beverage', 'Kitchen', 'Entire Business', etc.
+  location?: string;
+  category?: string;
+  
+  status: AuditStatus;
+  auditorId: string;
+  auditorName: string;
+  auditorRole?: string;
+  
+  reviewerId?: string;
+  reviewerName?: string;
+  reviewerNotes?: string;
+  reviewedAt?: string;
+  
+  approverId?: string;
+  approverName?: string;
+  approverNotes?: string;
+  approvedAt?: string;
+  
+  closedAt?: string;
+  closedBy?: string;
+  
+  // High-level summary metrics
+  totalItemsCount: number;
+  itemsCounted: number;
+  totalOpeningValue: number;
+  totalReceivedValue: number;
+  totalUsageValue: number;
+  totalExpectedValue: number;
+  totalPhysicalValue: number;
+  
+  totalDiscrepanciesCount: number;
+  totalShortageCount: number;
+  totalSurplusCount: number;
+  totalMatchedCount: number;
+  
+  estimatedLossValue: number;    // Absolute sum of shortage variances
+  estimatedSurplusValue: number; // Sum of surplus variances
+  netVarianceValue: number;      // Surplus - Loss
+  
+  riskLevel: 'LOW' | 'MEDIUM' | 'HIGH';
+  riskFactors?: string[];
+  
+  generalNotes?: string;
+  evidenceAttachments?: string[];
+  
+  items: AuditItemRecord[];
+  adjustments?: AuditAdjustmentRecord[];
+  
+  // Has an authorized stock adjustment been generated to update inventory?
+  inventoryAdjusted?: boolean;
+  inventoryAdjustedAt?: string;
+  inventoryAdjustedBy?: string;
+  
+  createdAt: string;
+  updatedAt: string;
+}
+
 

@@ -2,10 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { 
   Lock, Mail, Hotel, Key, Eye, EyeOff, 
   ShieldCheck, CheckCircle2, AlertTriangle, User, Phone,
-  Building2, Sparkles, CreditCard, Zap, Crown, ShieldAlert
+  Building2, Sparkles, CreditCard, Zap, Crown, ShieldAlert,
+  Hash, Delete
 } from 'lucide-react';
 import { AppUser, SystemRole } from '../types';
-import { loginUser, registerBusinessUser, logAudit } from '../lib/auth';
+import { loginUser, loginWithPin, registerBusinessUser, logAudit } from '../lib/auth';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { saveCurrentUser } from '../lib/storage';
 
@@ -15,8 +16,11 @@ interface LoginViewProps {
 }
 
 export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, darkMode = false }) => {
-  // Login Mode State: 'email' | 'register'
-  const [loginMode, setLoginMode] = useState<'email' | 'register'>('email');
+  // Login Mode State: 'pin' | 'email' | 'register'
+  const [loginMode, setLoginMode] = useState<'pin' | 'email' | 'register'>('pin');
+
+  // Staff Quick PIN Form State
+  const [staffPin, setStaffPin] = useState('');
 
   // Email/Password Form State
   const [email, setEmail] = useState('');
@@ -96,7 +100,54 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, darkMode =
     onLoginSuccess(updatedUser);
   };
 
-  // 1. Standard Email & Password Submit with Supabase Auth
+  // 1. Staff Quick PIN Login Submit
+  const handlePinSubmit = async (e?: React.FormEvent, directPin?: string) => {
+    if (e) e.preventDefault();
+    if (cooldownSeconds > 0) return;
+
+    const pinToTest = (directPin !== undefined ? directPin : staffPin).trim();
+    if (!pinToTest) {
+      setErrorMsg('Please enter your 4-digit Staff PIN code.');
+      return;
+    }
+
+    setErrorMsg('');
+    setSuccessMsg('');
+    setIsSubmitting(true);
+
+    try {
+      const result = await loginWithPin(pinToTest);
+      if (result.success && result.user) {
+        handleAuthSuccess(result.user, 'Staff PIN');
+      } else {
+        handleAuthFailure(result.error || 'Invalid PIN code. Please check with your manager.', `PIN-${pinToTest}`);
+      }
+    } catch (err: any) {
+      handleAuthFailure(err.message || 'Authentication error.', `PIN-${pinToTest}`);
+    }
+  };
+
+  const handleNumpadPress = (digit: string) => {
+    if (cooldownSeconds > 0 || isSubmitting) return;
+    if (staffPin.length < 6) {
+      const newPin = staffPin + digit;
+      setStaffPin(newPin);
+      if (newPin.length === 4) {
+        handlePinSubmit(undefined, newPin);
+      }
+    }
+  };
+
+  const handleNumpadClear = () => {
+    setStaffPin('');
+    setErrorMsg('');
+  };
+
+  const handleNumpadBackspace = () => {
+    setStaffPin(prev => prev.slice(0, -1));
+  };
+
+  // 2. Standard Email & Password Submit with Supabase Auth
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (cooldownSeconds > 0) return;
@@ -121,7 +172,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, darkMode =
     }
   };
 
-  // 2. Register New Business Submit with Supabase Auth
+  // 3. Register New Business Submit with Supabase Auth
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (cooldownSeconds > 0) return;
@@ -231,33 +282,47 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, darkMode =
           </div>
 
           {/* Navigation Tabs */}
-          <div className="flex border-b border-slate-700 bg-slate-900/50 p-1.5">
+          <div className="flex border-b border-slate-700 bg-slate-900/50 p-1.5 gap-1">
+            <button
+              id="tab-btn-pin"
+              type="button"
+              onClick={() => { setLoginMode('pin'); setErrorMsg(''); setSuccessMsg(''); }}
+              className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1.5 ${
+                loginMode === 'pin'
+                  ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Zap className="w-3.5 h-3.5" />
+              <span>Staff PIN</span>
+            </button>
+
             <button
               id="tab-btn-signin"
               type="button"
               onClick={() => { setLoginMode('email'); setErrorMsg(''); setSuccessMsg(''); }}
-              className={`flex-1 py-3 px-4 rounded-2xl text-xs font-bold transition-all flex items-center justify-center space-x-2 ${
+              className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1.5 ${
                 loginMode === 'email'
                   ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              <Key className="w-4 h-4" />
-              <span>Sign In</span>
+              <Key className="w-3.5 h-3.5" />
+              <span>Email Sign In</span>
             </button>
 
             <button
               id="tab-btn-register-biz"
               type="button"
               onClick={() => { setLoginMode('register'); setErrorMsg(''); setSuccessMsg(''); }}
-              className={`flex-1 py-3 px-4 rounded-2xl text-xs font-bold transition-all flex items-center justify-center space-x-2 ${
+              className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1.5 ${
                 loginMode === 'register'
                   ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              <Building2 className="w-4 h-4" />
-              <span>Register Business</span>
+              <Building2 className="w-3.5 h-3.5" />
+              <span>Register</span>
             </button>
           </div>
 
@@ -292,7 +357,115 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, darkMode =
               </div>
             )}
 
-            {/* TAB 1: SIGN IN (STAFF, MANAGERS, SUPER ADMIN) */}
+            {/* TAB 1: STAFF QUICK PIN LOGIN */}
+            {loginMode === 'pin' && (
+              <form onSubmit={handlePinSubmit} className="space-y-4">
+                <div className="text-center space-y-1">
+                  <h3 className="text-sm font-bold text-white flex items-center justify-center gap-1.5">
+                    <Zap className="w-4 h-4 text-amber-400" />
+                    <span>Staff & Waiter Fast Terminal Login</span>
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Enter your 4-digit Staff PIN code to unlock the POS terminal and table management.
+                  </p>
+                </div>
+
+                {/* PIN Display & Input */}
+                <div className="flex flex-col items-center justify-center py-2 space-y-3">
+                  <div className="flex items-center justify-center space-x-3">
+                    {[0, 1, 2, 3].map((idx) => (
+                      <div
+                        key={idx}
+                        className={`w-12 h-14 rounded-2xl border flex items-center justify-center text-xl font-bold font-mono transition-all ${
+                          staffPin.length > idx
+                            ? 'border-amber-500 bg-amber-500/20 text-amber-300 shadow-md shadow-amber-500/20 scale-105'
+                            : 'border-slate-700 bg-slate-900/80 text-slate-600'
+                        }`}
+                      >
+                        {staffPin.length > idx ? '●' : '○'}
+                      </div>
+                    ))}
+                  </div>
+
+                  <input
+                    type="password"
+                    maxLength={6}
+                    id="staff-pin-input"
+                    value={staffPin}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/[^0-9]/g, '');
+                      setStaffPin(val);
+                      if (val.length === 4) {
+                        handlePinSubmit(undefined, val);
+                      }
+                    }}
+                    placeholder="Enter 4-digit PIN"
+                    className="text-center font-mono tracking-widest text-sm bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 w-44"
+                  />
+                </div>
+
+                {/* On-screen Numeric Keypad */}
+                <div className="grid grid-cols-3 gap-2 max-w-[280px] mx-auto pt-1">
+                  {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((num) => (
+                    <button
+                      key={num}
+                      type="button"
+                      onClick={() => handleNumpadPress(num)}
+                      disabled={isSubmitting || cooldownSeconds > 0}
+                      className="h-12 rounded-2xl bg-slate-800/80 hover:bg-slate-700 active:bg-amber-500 active:text-slate-950 text-white font-bold text-base border border-slate-700/80 transition-all flex items-center justify-center shadow-sm disabled:opacity-50"
+                    >
+                      {num}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={handleNumpadClear}
+                    disabled={isSubmitting || cooldownSeconds > 0}
+                    className="h-12 rounded-2xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 font-bold text-xs border border-rose-500/30 transition-all flex items-center justify-center disabled:opacity-50"
+                  >
+                    Clear
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleNumpadPress('0')}
+                    disabled={isSubmitting || cooldownSeconds > 0}
+                    className="h-12 rounded-2xl bg-slate-800/80 hover:bg-slate-700 active:bg-amber-500 active:text-slate-950 text-white font-bold text-base border border-slate-700/80 transition-all flex items-center justify-center shadow-sm disabled:opacity-50"
+                  >
+                    0
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleNumpadBackspace}
+                    disabled={isSubmitting || cooldownSeconds > 0}
+                    className="h-12 rounded-2xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 font-bold text-xs border border-slate-700/80 transition-all flex items-center justify-center disabled:opacity-50"
+                  >
+                    ⌫
+                  </button>
+                </div>
+
+                <button
+                  type="submit"
+                  id="staff-pin-submit-btn"
+                  disabled={isSubmitting || cooldownSeconds > 0 || !staffPin}
+                  className="w-full py-3 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 active:scale-[0.99] text-slate-950 font-bold text-sm shadow-lg shadow-amber-500/20 transition-all cursor-pointer flex items-center justify-center space-x-2 disabled:opacity-50"
+                >
+                  {isSubmitting ? (
+                    <div className="w-5 h-5 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <>
+                      <Zap className="w-4 h-4" />
+                      <span>Unlock Staff Session</span>
+                    </>
+                  )}
+                </button>
+
+                <div className="p-3 bg-slate-900/60 border border-slate-700/60 rounded-xl text-[11px] text-slate-400 text-center">
+                  <span>Manager or Admin? You can also <button type="button" onClick={() => setLoginMode('email')} className="text-amber-400 font-bold underline">sign in with Email & Password</button>.</span>
+                </div>
+              </form>
+            )}
+
+            {/* TAB 2: SIGN IN (STAFF, MANAGERS, SUPER ADMIN) */}
             {loginMode === 'email' && (
               <form onSubmit={handleEmailSubmit} className="space-y-4">
                 <div>

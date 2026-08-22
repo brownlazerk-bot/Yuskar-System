@@ -54,7 +54,7 @@ export const PosTerminal: React.FC<PosTerminalProps> = ({
   const [customerName, setCustomerName] = useState<string>('');
   const [customerPhone, setCustomerPhone] = useState<string>('');
 
-  // Auto-select waiter if logged in user is a waiter
+  // Auto-select waiter if logged in user is a waiter or keep default
   useEffect(() => {
     if (currentUser && waiters.length > 0) {
       const matched = waiters.find(
@@ -62,9 +62,23 @@ export const PosTerminal: React.FC<PosTerminalProps> = ({
       );
       if (matched) {
         setSelectedWaiterId(matched.id);
+        return;
       }
     }
+    if (!selectedWaiterId && waiters.length > 0) {
+      setSelectedWaiterId(waiters[0].id);
+    }
   }, [currentUser, waiters]);
+
+  // When a table is chosen, auto-select its assigned waiter if available
+  useEffect(() => {
+    if (selectedTableId) {
+      const table = tables.find(t => t.id === selectedTableId);
+      if (table && table.assignedWaiterId) {
+        setSelectedWaiterId(table.assignedWaiterId);
+      }
+    }
+  }, [selectedTableId, tables]);
 
   // Cart State
   const [cartItems, setCartItems] = useState<OrderItem[]>([]);
@@ -749,9 +763,10 @@ export const PosTerminal: React.FC<PosTerminalProps> = ({
                 onChange={(e) => setSelectedWaiterId(e.target.value)}
                 className="w-full px-3 py-2 rounded-xl text-xs font-bold border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-amber-500"
               >
+                <option value="">-- Direct / Walk-In --</option>
                 {waiters.map((w) => (
                   <option key={w.id} value={w.id}>
-                    {w.name}
+                    {w.name} {w.employeeId ? `(${w.employeeId})` : ''} {w.shift ? `• ${w.shift}` : ''}
                   </option>
                 ))}
               </select>

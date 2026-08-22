@@ -172,6 +172,10 @@ export const ManagerSettings: React.FC<ManagerSettingsProps> = ({
   const [waiterName, setWaiterName] = useState('');
   const [waiterEmpId, setWaiterEmpId] = useState('');
   const [waiterPhone, setWaiterPhone] = useState('');
+  const [waiterEmail, setWaiterEmail] = useState('');
+  const [waiterPassword, setWaiterPassword] = useState('123456');
+  const [waiterPinCode, setWaiterPinCode] = useState('1234');
+  const [waiterActive, setWaiterActive] = useState(true);
   const [waiterShift, setWaiterShift] = useState<'Morning' | 'Afternoon' | 'Evening' | 'Night'>('Morning');
 
   const handleOpenMenuModal = (item?: MenuItem) => {
@@ -232,21 +236,33 @@ export const ManagerSettings: React.FC<ManagerSettingsProps> = ({
       setEditingWaiter(w);
       setWaiterName(w.name);
       setWaiterEmpId(w.employeeId);
-      setWaiterPhone(w.phone);
-      setWaiterShift(w.shift);
+      setWaiterPhone(w.phone || '');
+      setWaiterEmail(w.email || `${w.name.toLowerCase().replace(/[^a-z0-9]/g, '')}@hotel.com`);
+      setWaiterPassword(w.password || '123456');
+      setWaiterPinCode(w.pinCode || '1234');
+      setWaiterShift(w.shift || 'Morning');
+      setWaiterActive(w.active !== false);
     } else {
+      const generatedEmpId = `EMP-${Math.floor(100 + Math.random() * 900)}`;
       setEditingWaiter({
         id: `w-${Date.now()}`,
         name: '',
-        employeeId: `EMP-${Math.floor(100 + Math.random() * 900)}`,
+        employeeId: generatedEmpId,
         phone: '',
+        email: '',
+        password: '123456',
+        pinCode: '1234',
         shift: 'Morning',
         active: true
       });
       setWaiterName('');
-      setWaiterEmpId(`EMP-${Math.floor(100 + Math.random() * 900)}`);
+      setWaiterEmpId(generatedEmpId);
       setWaiterPhone('');
+      setWaiterEmail('');
+      setWaiterPassword('123456');
+      setWaiterPinCode('1234');
       setWaiterShift('Morning');
+      setWaiterActive(true);
     }
   };
 
@@ -254,12 +270,22 @@ export const ManagerSettings: React.FC<ManagerSettingsProps> = ({
     e.preventDefault();
     if (!editingWaiter) return;
 
+    const cleanName = waiterName.trim();
+    const cleanEmail = waiterEmail.trim().toLowerCase() || `${cleanName.toLowerCase().replace(/[^a-z0-9]/g, '') || 'waiter'}@hotel.com`;
+    const cleanPhone = waiterPhone.trim();
+    const cleanPin = waiterPinCode.trim() || '1234';
+    const cleanPassword = waiterPassword.trim() || '123456';
+
     const saved: Waiter = {
       ...editingWaiter,
-      name: waiterName,
+      name: cleanName,
       employeeId: waiterEmpId,
-      phone: waiterPhone,
-      shift: waiterShift
+      phone: cleanPhone,
+      email: cleanEmail,
+      pinCode: cleanPin,
+      password: cleanPassword,
+      shift: waiterShift,
+      active: waiterActive
     };
 
     onSaveWaiter(saved);
@@ -380,8 +406,19 @@ export const ManagerSettings: React.FC<ManagerSettingsProps> = ({
         <div className={`p-5 rounded-2xl border transition-colors ${
           darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'
         }`}>
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="font-bold text-sm text-gray-900 dark:text-white">Waiters & Staff Accounts</h3>
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+            <div>
+              <h3 className="font-bold text-sm text-gray-900 dark:text-white flex items-center gap-2">
+                <span>Waiters & Staff Accounts</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
+                  ☁️ Supabase Synced
+                </span>
+              </h3>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                Staff accounts with their credentials and 4-digit PIN are saved to Supabase to enable fast terminal login.
+              </p>
+            </div>
+
             <button
               onClick={() => handleOpenWaiterModal()}
               className="px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold flex items-center space-x-1.5 shadow-md shadow-purple-600/20"
@@ -393,21 +430,34 @@ export const ManagerSettings: React.FC<ManagerSettingsProps> = ({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
             {waiters.map((waiter) => (
-              <div key={waiter.id} className="p-4 rounded-2xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/60 flex justify-between items-start">
-                <div>
-                  <h4 className="font-bold text-sm text-gray-900 dark:text-white">{waiter.name}</h4>
-                  <p className="text-xs text-gray-500">ID: {waiter.employeeId}</p>
-                  <p className="text-xs text-gray-500 mt-1">Phone: {waiter.phone}</p>
-                  <span className="inline-block mt-2 px-2 py-0.5 rounded-md font-bold text-[10px] bg-amber-100 text-amber-800 dark:bg-amber-900/50">
-                    Shift: {waiter.shift}
-                  </span>
+              <div key={waiter.id} className="p-4 rounded-2xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/60 flex flex-col justify-between space-y-3">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h4 className="font-bold text-sm text-gray-900 dark:text-white">{waiter.name}</h4>
+                    <p className="text-xs text-gray-500 font-mono">ID: {waiter.employeeId}</p>
+                    {waiter.email && <p className="text-[11px] text-gray-500 mt-0.5 truncate max-w-[180px]">✉️ {waiter.email}</p>}
+                    {waiter.phone && <p className="text-[11px] text-gray-500 mt-0.5">📞 {waiter.phone}</p>}
+                  </div>
+                  <button
+                    onClick={() => handleOpenWaiterModal(waiter)}
+                    className="p-2 rounded-xl bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 transition-colors"
+                  >
+                    <Edit className="w-3.5 h-3.5" />
+                  </button>
                 </div>
-                <button
-                  onClick={() => handleOpenWaiterModal(waiter)}
-                  className="p-1.5 rounded-lg bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300"
-                >
-                  <Edit className="w-3.5 h-3.5" />
-                </button>
+
+                <div className="pt-2 border-t border-gray-200 dark:border-gray-700/60 flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <span className="px-2 py-0.5 rounded-md font-bold text-[10px] bg-amber-100 text-amber-800 dark:bg-amber-900/50">
+                      Shift: {waiter.shift}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-md font-bold font-mono text-[10px] bg-sky-100 text-sky-800 dark:bg-sky-900/50 border border-sky-200 dark:border-sky-800">
+                      PIN: {waiter.pinCode || '1234'}
+                    </span>
+                  </div>
+
+                  <span className={`w-2.5 h-2.5 rounded-full ${waiter.active !== false ? 'bg-emerald-500' : 'bg-gray-400'}`} title={waiter.active !== false ? 'Active Staff' : 'Inactive'} />
+                </div>
               </div>
             ))}
           </div>
@@ -1008,49 +1058,125 @@ export const ManagerSettings: React.FC<ManagerSettingsProps> = ({
 
       {/* Edit Waiter Modal */}
       {editingWaiter && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
-          <div className={`max-w-md w-full rounded-2xl p-6 shadow-2xl border transition-colors ${
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className={`max-w-md w-full rounded-2xl p-6 shadow-2xl border transition-colors my-8 ${
             darkMode ? 'bg-gray-900 text-white border-gray-800' : 'bg-white text-gray-900 border-gray-200'
           }`}>
-            <h3 className="font-bold text-base mb-4">Edit / Add Waiter</h3>
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="font-bold text-base">Edit / Add Waiter</h3>
+                <p className="text-xs text-gray-500">Configure waiter details and terminal login credentials.</p>
+              </div>
+              <span className="px-2 py-0.5 rounded font-mono text-[11px] font-bold bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300">
+                {waiterEmpId}
+              </span>
+            </div>
+
             <form onSubmit={handleSaveWaiterForm} className="space-y-3">
               <div>
-                <label className="block text-xs font-bold mb-1">Waiter Full Name</label>
+                <label className="block text-xs font-bold mb-1">Waiter Full Name *</label>
                 <input
                   type="text"
                   required
                   value={waiterName}
                   onChange={(e) => setWaiterName(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl text-xs border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800"
+                  placeholder="e.g. Alex Johnson"
+                  className="w-full px-3 py-2 rounded-xl text-xs border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white"
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-bold mb-1">Phone Number</label>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs font-bold mb-1">Phone Number</label>
+                  <input
+                    type="text"
+                    value={waiterPhone}
+                    onChange={(e) => setWaiterPhone(e.target.value)}
+                    placeholder="+1 (555) 000-0000"
+                    className="w-full px-3 py-2 rounded-xl text-xs border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold mb-1">Assigned Shift</label>
+                  <select
+                    value={waiterShift}
+                    onChange={(e) => setWaiterShift(e.target.value as any)}
+                    className="w-full px-3 py-2 rounded-xl text-xs border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 font-bold text-gray-900 dark:text-white"
+                  >
+                    <option value="Morning">Morning</option>
+                    <option value="Afternoon">Afternoon</option>
+                    <option value="Evening">Evening</option>
+                    <option value="Night">Night</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Login Credentials Section */}
+              <div className="p-3.5 rounded-xl border border-sky-500/30 bg-sky-500/5 space-y-2.5">
+                <div className="flex items-center justify-between text-xs font-bold text-sky-800 dark:text-sky-300">
+                  <span>Supabase Login Credentials</span>
+                  <span className="text-[10px] font-normal text-sky-600 dark:text-sky-400">Enables Staff Sign-in</span>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
+                    Login Email Address
+                  </label>
+                  <input
+                    type="email"
+                    value={waiterEmail}
+                    onChange={(e) => setWaiterEmail(e.target.value)}
+                    placeholder="waiter@hotel.com"
+                    className="w-full px-3 py-2 rounded-xl text-xs border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
+                      Account Password
+                    </label>
+                    <input
+                      type="text"
+                      value={waiterPassword}
+                      onChange={(e) => setWaiterPassword(e.target.value)}
+                      placeholder="••••••"
+                      className="w-full px-3 py-2 rounded-xl text-xs font-mono border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
+                      4-Digit Staff PIN *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      maxLength={6}
+                      value={waiterPinCode}
+                      onChange={(e) => setWaiterPinCode(e.target.value.replace(/[^0-9]/g, ''))}
+                      placeholder="1234"
+                      className="w-full px-3 py-2 rounded-xl text-xs font-mono font-bold border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-center"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-2 pt-1">
                 <input
-                  type="text"
-                  required
-                  value={waiterPhone}
-                  onChange={(e) => setWaiterPhone(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl text-xs border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800"
+                  type="checkbox"
+                  id="waiter_active_toggle"
+                  checked={waiterActive}
+                  onChange={(e) => setWaiterActive(e.target.checked)}
+                  className="w-4 h-4 rounded text-purple-600 focus:ring-purple-500"
                 />
+                <label htmlFor="waiter_active_toggle" className="text-xs font-bold text-gray-800 dark:text-gray-200 cursor-pointer">
+                  Active Staff Member (Permitted to log in and take table orders)
+                </label>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold mb-1">Assigned Shift</label>
-                <select
-                  value={waiterShift}
-                  onChange={(e) => setWaiterShift(e.target.value as any)}
-                  className="w-full px-3 py-2 rounded-xl text-xs border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 font-bold"
-                >
-                  <option value="Morning">Morning</option>
-                  <option value="Afternoon">Afternoon</option>
-                  <option value="Evening">Evening</option>
-                  <option value="Night">Night</option>
-                </select>
-              </div>
-
-              <div className="flex space-x-2 pt-2">
+              <div className="flex space-x-2 pt-3">
                 <button
                   type="button"
                   onClick={() => setEditingWaiter(null)}
@@ -1060,9 +1186,9 @@ export const ManagerSettings: React.FC<ManagerSettingsProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold"
+                  className="flex-1 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold shadow-md shadow-purple-600/20"
                 >
-                  Save Waiter
+                  Save & Sync to Supabase
                 </button>
               </div>
             </form>

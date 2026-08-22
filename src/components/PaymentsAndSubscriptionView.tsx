@@ -205,13 +205,15 @@ export const PaymentsAndSubscriptionView: React.FC<PaymentsAndSubscriptionViewPr
         </div>
 
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => handleOpenPlanEditor()}
-            className="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-[0.99] text-amber-400 border border-slate-700 font-bold text-xs flex items-center gap-2 shadow-sm transition cursor-pointer"
-          >
-            <Sliders className="w-4 h-4" />
-            <span>Edit Plans & Pricing</span>
-          </button>
+          {Boolean(currentUser?.isSuperAdmin || currentUser?.role === 'Super Admin') && (
+            <button
+              onClick={() => handleOpenPlanEditor()}
+              className="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-[0.99] text-amber-400 border border-slate-700 font-bold text-xs flex items-center gap-2 shadow-sm transition cursor-pointer"
+            >
+              <Sliders className="w-4 h-4" />
+              <span>Edit Plans & Pricing</span>
+            </button>
+          )}
 
           <button
             onClick={() => setShowLicenseModal(true)}
